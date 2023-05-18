@@ -39,5 +39,5 @@ At the end of this project, you are expected to be able to explain to anyone, wi
 - Common testing patterns such as mocking, parametrizations and fixtures
 
 
-#AUTHOR
--Simanga Mchunu
+# AUTHOR
+- [Simanga Mchunu](https://twitter.com/Simacoder)
