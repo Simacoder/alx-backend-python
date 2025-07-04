@@ -1,44 +1,40 @@
 #!/usr/bin/env python3
 """
-Lazy loading paginated data generator for efficient data retrieval from MySQL.
+Lazy loading paginated data generator for efficient data retrieval from MySQL
 """
 
 import os
 from dotenv import load_dotenv
 import mysql.connector
 
-# Load environment variables from .env file
 load_dotenv()
 
 def get_db_connection():
-    """Establish MySQL DB connection using credentials from .env"""
     return mysql.connector.connect(
-        host=os.getenv("DB_HOST"),
-        user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASSWORD"),
-        database=os.getenv("DB_NAME"),
-        port=int(os.getenv("DB_PORT", 3306))
+        host=os.getenv('DB_HOST'),
+        user=os.getenv('DB_USER'),
+        password=os.getenv('DB_PASSWORD'),
+        database=os.getenv('DB_NAME'),
+        port=int(os.getenv('DB_PORT', 3306))
     )
-
 
 def paginate_users(page_size, offset):
     """
-    Fetch a page of users from the user_data table using LIMIT and OFFSET.
+    Fetch a specific page of users from the database.
 
     Args:
         page_size (int): Number of users per page
-        offset (int): Offset from the beginning of the table
+        offset (int): Starting position for the page
 
     Returns:
-        list of tuples: User records for the given page
+        list: List of user records for the requested page
     """
     conn = get_db_connection()
     cursor = conn.cursor()
 
     try:
         cursor.execute("""
-            SELECT user_id, name, email, age
-            FROM user_data
+            SELECT * FROM user_data
             ORDER BY user_id
             LIMIT %s OFFSET %s
         """, (page_size, offset))
@@ -47,11 +43,9 @@ def paginate_users(page_size, offset):
         cursor.close()
         conn.close()
 
-
 def lazy_pagination(page_size):
     """
-    Generator that lazily fetches pages of users from the database.
-    Only fetches the next page when needed.
+    Generator that lazily loads pages of users from the database.
 
     Args:
         page_size (int): Number of users per page
@@ -60,7 +54,8 @@ def lazy_pagination(page_size):
         list: A page of user records
     """
     offset = 0
-    while True:  # Single loop required
+
+    while True:
         page = paginate_users(page_size, offset)
         if not page:
             break
