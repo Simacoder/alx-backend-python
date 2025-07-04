@@ -1,0 +1,32 @@
+# Python MySQL Database Generator Project Requirements
+# ===================================================
+
+# MySQL connector for Python
+mysql-connector-python>=8.0.33
+
+# Data manipulation and analysis
+pandas>=1.5.0
+
+# UUID generation (built-in, but listing for completeness)
+# uuid - built-in module
+
+# CSV handling (built-in, but listing for completeness)
+# csv - built-in module
+
+# Additional useful packages for data processing
+numpy>=1.21.0
+
+# For enhanced logging and configuration
+python-dotenv>=0.19.0
+
+# For data validation (optional)
+pydantic>=1.10.0
+
+# For testing (optional)
+pytest>=7.0.0
+pytest-mysql>=2.3.0
+
+# For development (optional)
+black>=22.0.0
+flake8>=4.0.0
+mypy>=0.910
