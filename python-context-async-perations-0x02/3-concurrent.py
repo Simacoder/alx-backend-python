@@ -37,17 +37,14 @@ async def async_fetch_users() -> List[Dict[str, Any]]:
         return []
 
 
-async def async_fetch_older_users(age_threshold: int = 40) -> List[Dict[str, Any]]:
+async def async_fetch_older_users():
     """
-    Asynchronously fetch users older than the specified age threshold.
+    Asynchronously fetch users older than 40.
     
-    Args:
-        age_threshold (int): Minimum age to filter users (default: 40)
-        
     Returns:
-        List[Dict[str, Any]]: List of users older than the threshold
+        List[Dict[str, Any]]: List of users older than 40
     """
-    print(f"[ASYNC] Starting to fetch users older than {age_threshold}...")
+    print("[ASYNC] Starting to fetch users older than 40...")
     start_time = time.time()
     
     try:
@@ -57,7 +54,7 @@ async def async_fetch_older_users(age_threshold: int = 40) -> List[Dict[str, Any
             conn.row_factory = aiosqlite.Row
             
             # Execute parameterized query asynchronously
-            async with conn.execute("SELECT * FROM users WHERE age > ?", (age_threshold,)) as cursor:
+            async with conn.execute("SELECT * FROM users WHERE age > ?", (40,)) as cursor:
                 # Fetch all results
                 rows = await cursor.fetchall()
                 
@@ -65,7 +62,7 @@ async def async_fetch_older_users(age_threshold: int = 40) -> List[Dict[str, Any
                 older_users = [dict(row) for row in rows]
                 
                 execution_time = time.time() - start_time
-                print(f"[ASYNC] Fetched {len(older_users)} users older than {age_threshold} in {execution_time:.3f} seconds")
+                print(f"[ASYNC] Fetched {len(older_users)} users older than 40 in {execution_time:.3f} seconds")
                 
                 return older_users
                 
@@ -123,7 +120,7 @@ async def fetch_concurrently():
         # Execute multiple queries concurrently using asyncio.gather
         all_users, older_users, middle_aged_users = await asyncio.gather(
             async_fetch_users(),
-            async_fetch_older_users(40),
+            async_fetch_older_users(),
             async_fetch_users_by_age_range(25, 50),
             return_exceptions=True  # Don't fail if one query fails
         )
@@ -196,7 +193,7 @@ async def demonstrate_sequential_vs_concurrent():
     sequential_start = time.time()
     
     all_users_seq = await async_fetch_users()
-    older_users_seq = await async_fetch_older_users(40)
+    older_users_seq = await async_fetch_older_users()
     middle_aged_seq = await async_fetch_users_by_age_range(25, 50)
     
     sequential_time = time.time() - sequential_start
@@ -208,7 +205,7 @@ async def demonstrate_sequential_vs_concurrent():
     
     all_users_conc, older_users_conc, middle_aged_conc = await asyncio.gather(
         async_fetch_users(),
-        async_fetch_older_users(40),
+        async_fetch_older_users(),
         async_fetch_users_by_age_range(25, 50)
     )
     
@@ -282,4 +279,4 @@ async def simple_fetch_concurrently():
 
 
 # Uncomment the line below to run the simple version
-asyncio.run(simple_fetch_concurrently())
+# asyncio.run(simple_fetch_concurrently())
