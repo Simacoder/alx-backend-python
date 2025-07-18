@@ -1,4 +1,3 @@
-# Create your views here.
 # chats/views.py
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
@@ -8,6 +7,8 @@ from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
 from django.db.models import Q, Count, Prefetch
 from django.utils import timezone
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import SearchFilter, OrderingFilter
 
 from .models import Conversation, Message, MessageReadStatus
 from .serializers import (
@@ -22,6 +23,7 @@ from .serializers import (
     ConversationParticipantSerializer,
     UserSerializer
 )
+from .filters import ConversationFilter, MessageFilter, UserFilter
 
 User = get_user_model()
 
@@ -43,6 +45,11 @@ class ConversationViewSet(viewsets.ModelViewSet):
     serializer_class = ConversationSerializer
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = StandardResultsSetPagination
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = ConversationFilter
+    search_fields = ['title', 'participants__username', 'participants__first_name', 'participants__last_name']
+    ordering_fields = ['created_at', 'updated_at', 'title']
+    ordering = ['-updated_at']
     
     def get_queryset(self):
         """
@@ -330,6 +337,11 @@ class MessageViewSet(viewsets.ModelViewSet):
     serializer_class = MessageSerializer
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = StandardResultsSetPagination
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = MessageFilter
+    search_fields = ['content', 'sender__username', 'sender__first_name', 'sender__last_name']
+    ordering_fields = ['created_at', 'updated_at']
+    ordering = ['-created_at']
     
     def get_queryset(self):
         """
@@ -552,6 +564,11 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = UserSerializer
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = StandardResultsSetPagination
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = UserFilter
+    search_fields = ['username', 'first_name', 'last_name', 'email']
+    ordering_fields = ['username', 'first_name', 'last_name', 'date_joined']
+    ordering = ['username']
     
     def get_queryset(self):
         """
@@ -595,7 +612,7 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
         return Response(serializer.data)
 
 
-# function-based views for specific endpoints
+# Function-based views for specific endpoints
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 
