@@ -2,6 +2,7 @@
 # chats/models.py
 from django.db import models
 from django.contrib.auth.models import AbstractUser
+from django.contrib.auth.hashers import make_password
 from django.conf import settings
 import uuid
 
@@ -19,6 +20,12 @@ class User(AbstractUser):
         default=uuid.uuid4, 
         editable=False,
         help_text="Unique identifier for the user"
+    )
+    
+    # Password field (inherited from AbstractUser, but adding custom save logic)
+    password = models.CharField(
+        max_length=128,
+        help_text="User's hashed password"
     )
     
     # Additional user fields
@@ -70,6 +77,21 @@ class User(AbstractUser):
         if self.first_name and self.last_name:
             return f"{self.first_name} {self.last_name}"
         return self.username
+
+    def save(self, *args, **kwargs):
+        """Override save to hash password if it's being set"""
+        if self.password and not self.password.startswith(('pbkdf2_', 'bcrypt', 'argon2')):
+            self.password = make_password(self.password)
+        super().save(*args, **kwargs)
+
+    def set_password(self, raw_password):
+        """Set password using Django's built-in password hashing"""
+        self.password = make_password(raw_password)
+
+    def check_password(self, raw_password):
+        """Check if the given raw password matches the stored password"""
+        from django.contrib.auth.hashers import check_password
+        return check_password(raw_password, self.password)
 
 
 class Conversation(models.Model):
@@ -150,7 +172,7 @@ class Conversation(models.Model):
 
     def get_latest_message(self):
         """Get the most recent message in this conversation"""
-        return self.messages.order_by('-created_at').first()
+        return self.messages.order_by('-sent_at').first()
 
     def add_participant(self, user):
         """Add a user to the conversation"""
@@ -189,15 +211,15 @@ class Message(models.Model):
         help_text="Conversation this message belongs to"
     )
     
-    # Message content
-    content = models.TextField(
+    # Message content - renamed from 'content' to 'message_body'
+    message_body = models.TextField(
         help_text="The actual message content"
     )
     
-    # Message metadata
-    created_at = models.DateTimeField(
+    # Message metadata - renamed from 'created_at' to 'sent_at'
+    sent_at = models.DateTimeField(
         auto_now_add=True,
-        help_text="Message creation timestamp"
+        help_text="Message sent timestamp"
     )
     
     updated_at = models.DateTimeField(
@@ -230,17 +252,17 @@ class Message(models.Model):
         db_table = 'messages'
         verbose_name = 'Message'
         verbose_name_plural = 'Messages'
-        ordering = ['-created_at']
+        ordering = ['-sent_at']
         
         # Add database indexes for better query performance
         indexes = [
-            models.Index(fields=['conversation', '-created_at']),
-            models.Index(fields=['sender', '-created_at']),
+            models.Index(fields=['conversation', '-sent_at']),
+            models.Index(fields=['sender', '-sent_at']),
             models.Index(fields=['is_read']),
         ]
 
     def __str__(self):
-        content_preview = self.content[:50] + "..." if len(self.content) > 50 else self.content
+        content_preview = self.message_body[:50] + "..." if len(self.message_body) > 50 else self.message_body
         return f"{self.sender.username}: {content_preview}"
 
     def mark_as_read(self):

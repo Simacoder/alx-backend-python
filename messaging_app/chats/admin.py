@@ -50,12 +50,12 @@ class MessageInline(admin.TabularInline):
     """
     model = Message
     extra = 0
-    readonly_fields = ['message_id', 'created_at', 'updated_at', 'is_read', 'is_edited']
-    fields = ['sender', 'content', 'reply_to', 'is_read', 'is_edited', 'created_at']
+    readonly_fields = ['message_id', 'sent_at', 'updated_at', 'is_read', 'is_edited']
+    fields = ['sender', 'message_body', 'reply_to', 'is_read', 'is_edited', 'sent_at']
     
     def get_queryset(self, request):
         """Optimize queryset for inline"""
-        return super().get_queryset(request).select_related('sender').order_by('-created_at')
+        return super().get_queryset(request).select_related('sender').order_by('-sent_at')
 
 
 @admin.register(Conversation)
@@ -95,26 +95,26 @@ class MessageAdmin(admin.ModelAdmin):
     """
     list_display = [
         'message_id', 'sender', 'conversation_title', 'content_preview', 
-        'is_read', 'is_edited', 'created_at'
+        'is_read', 'is_edited', 'sent_at'
     ]
     
     list_filter = [
-        'is_read', 'is_edited', 'created_at', 'updated_at',
+        'is_read', 'is_edited', 'sent_at', 'updated_at',
         'conversation__is_group'
     ]
     
     search_fields = [
-        'content', 'sender__username', 'sender__email', 
+        'message_body', 'sender__username', 'sender__email', 
         'conversation__title'
     ]
     
     readonly_fields = [
-        'message_id', 'created_at', 'updated_at', 'is_read', 'is_edited'
+        'message_id', 'sent_at', 'updated_at', 'is_read', 'is_edited'
     ]
     
     raw_id_fields = ['sender', 'conversation', 'reply_to']
     
-    date_hierarchy = 'created_at'
+    date_hierarchy = 'sent_at'
     
     def conversation_title(self, obj):
         """Display conversation title or generated name"""
@@ -123,9 +123,9 @@ class MessageAdmin(admin.ModelAdmin):
     
     def content_preview(self, obj):
         """Display truncated message content"""
-        if len(obj.content) > 100:
-            return obj.content[:100] + "..."
-        return obj.content
+        if len(obj.message_body) > 100:
+            return obj.message_body[:100] + "..."
+        return obj.message_body
     content_preview.short_description = 'Content'
     
     def get_queryset(self, request):
@@ -143,7 +143,7 @@ class MessageReadStatusAdmin(admin.ModelAdmin):
     list_filter = ['read_at', 'message__conversation__is_group']
     
     search_fields = [
-        'user__username', 'user__email', 'message__content',
+        'user__username', 'user__email', 'message__message_body',
         'message__sender__username'
     ]
     
@@ -153,7 +153,7 @@ class MessageReadStatusAdmin(admin.ModelAdmin):
     
     def message_preview(self, obj):
         """Display message preview"""
-        content = obj.message.content
+        content = obj.message.message_body
         if len(content) > 50:
             content = content[:50] + "..."
         return f"{obj.message.sender.username}: {content}"
