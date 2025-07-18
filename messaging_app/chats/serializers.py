@@ -12,6 +12,11 @@ class UserSerializer(serializers.ModelSerializer):
     Used for nested relationships and user listings.
     """
     full_name = serializers.ReadOnlyField(source='get_full_name')
+    username = serializers.CharField(max_length=150, read_only=True)
+    email = serializers.CharField(max_length=254, read_only=True)
+    first_name = serializers.CharField(max_length=150, read_only=True)
+    last_name = serializers.CharField(max_length=150, read_only=True)
+    phone_number = serializers.CharField(max_length=20, read_only=True, allow_blank=True)
     
     class Meta:
         model = User
@@ -29,6 +34,11 @@ class UserDetailSerializer(serializers.ModelSerializer):
     Includes additional fields for user profile management.
     """
     full_name = serializers.ReadOnlyField(source='get_full_name')
+    username = serializers.CharField(max_length=150, read_only=True)
+    email = serializers.CharField(max_length=254, read_only=True)
+    first_name = serializers.CharField(max_length=150, allow_blank=True)
+    last_name = serializers.CharField(max_length=150, allow_blank=True)
+    phone_number = serializers.CharField(max_length=20, allow_blank=True, required=False)
     conversations_count = serializers.SerializerMethodField()
     sent_messages_count = serializers.SerializerMethodField()
     
@@ -60,6 +70,15 @@ class MessageSerializer(serializers.ModelSerializer):
     """
     sender = UserSerializer(read_only=True)
     sender_id = serializers.UUIDField(write_only=True)
+    content = serializers.CharField(
+        max_length=5000,
+        min_length=1,
+        help_text="Message content (1-5000 characters)",
+        error_messages={
+            'blank': 'Message content cannot be empty.',
+            'max_length': 'Message content cannot exceed 5000 characters.'
+        }
+    )
     reply_to_message = serializers.SerializerMethodField()
     replies_count = serializers.SerializerMethodField()
     
@@ -90,6 +109,18 @@ class MessageSerializer(serializers.ModelSerializer):
         """Get the number of replies to this message"""
         return obj.replies.count()
     
+    def validate_content(self, value):
+        """Validate message content"""
+        if not value or value.isspace():
+            raise serializers.ValidationError("Message content cannot be empty or only whitespace.")
+        
+        # Remove excessive whitespace
+        cleaned_content = ' '.join(value.split())
+        if len(cleaned_content) < 1:
+            raise serializers.ValidationError("Message content cannot be empty after cleaning.")
+        
+        return cleaned_content
+    
     def validate_sender_id(self, value):
         """Validate that the sender exists"""
         try:
@@ -119,6 +150,11 @@ class MessageCreateSerializer(serializers.ModelSerializer):
     Used in nested conversation serializers.
     """
     sender = UserSerializer(read_only=True)
+    content = serializers.CharField(
+        max_length=5000,
+        min_length=1,
+        help_text="Message content"
+    )
     
     class Meta:
         model = Message
@@ -140,6 +176,12 @@ class ConversationSerializer(serializers.ModelSerializer):
         write_only=True,
         required=False
     )
+    title = serializers.CharField(
+        max_length=200,
+        allow_blank=True,
+        required=False,
+        help_text="Conversation title (optional for group chats)"
+    )
     created_by = UserSerializer(read_only=True)
     participant_count = serializers.ReadOnlyField()
     latest_message = serializers.SerializerMethodField()
@@ -156,6 +198,12 @@ class ConversationSerializer(serializers.ModelSerializer):
             'conversation_id', 'participant_count', 'created_by',
             'created_at', 'updated_at'
         ]
+    
+    def validate_title(self, value):
+        """Validate conversation title"""
+        if value and value.isspace():
+            raise serializers.ValidationError("Title cannot be only whitespace.")
+        return value.strip() if value else value
     
     def get_latest_message(self, obj):
         """Get the latest message in the conversation"""
@@ -244,6 +292,12 @@ class ConversationDetailSerializer(serializers.ModelSerializer):
         write_only=True,
         required=False
     )
+    title = serializers.CharField(
+        max_length=200,
+        allow_blank=True,
+        required=False,
+        help_text="Conversation title"
+    )
     created_by = UserSerializer(read_only=True)
     messages = serializers.SerializerMethodField()
     participant_count = serializers.ReadOnlyField()
@@ -312,6 +366,12 @@ class ConversationCreateSerializer(serializers.ModelSerializer):
     Serializer for creating new conversations.
     Simplified version with validation.
     """
+    title = serializers.CharField(
+        max_length=200,
+        allow_blank=True,
+        required=False,
+        help_text="Optional conversation title"
+    )
     participant_ids = serializers.ListField(
         child=serializers.UUIDField(),
         min_length=1,
@@ -321,6 +381,12 @@ class ConversationCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Conversation
         fields = ['title', 'participant_ids']
+    
+    def validate_title(self, value):
+        """Validate conversation title"""
+        if value and value.isspace():
+            raise serializers.ValidationError("Title cannot be only whitespace.")
+        return value.strip() if value else value
     
     def validate_participant_ids(self, value):
         """Validate participant IDs and check for duplicates"""
@@ -369,9 +435,31 @@ class MessageUpdateSerializer(serializers.ModelSerializer):
     Serializer for updating messages.
     Only allows updating content and marks as edited.
     """
+    content = serializers.CharField(
+        max_length=5000,
+        min_length=1,
+        help_text="Updated message content",
+        error_messages={
+            'blank': 'Message content cannot be empty.',
+            'max_length': 'Message content cannot exceed 5000 characters.'
+        }
+    )
+    
     class Meta:
         model = Message
         fields = ['content']
+    
+    def validate_content(self, value):
+        """Validate updated message content"""
+        if not value or value.isspace():
+            raise serializers.ValidationError("Message content cannot be empty or only whitespace.")
+        
+        # Remove excessive whitespace
+        cleaned_content = ' '.join(value.split())
+        if len(cleaned_content) < 1:
+            raise serializers.ValidationError("Message content cannot be empty after cleaning.")
+        
+        return cleaned_content
     
     def update(self, instance, validated_data):
         """Update message content and mark as edited"""
@@ -411,3 +499,70 @@ class MessageReadSerializer(serializers.Serializer):
         if existing_messages.count() != len(value):
             raise serializers.ValidationError("One or more messages do not exist")
         return value
+
+
+class ConversationTitleUpdateSerializer(serializers.ModelSerializer):
+    """
+    Serializer for updating conversation titles.
+    """
+    title = serializers.CharField(
+        max_length=200,
+        allow_blank=True,
+        help_text="New conversation title"
+    )
+    
+    class Meta:
+        model = Conversation
+        fields = ['title']
+    
+    def validate_title(self, value):
+        """Validate conversation title"""
+        if value and value.isspace():
+            raise serializers.ValidationError("Title cannot be only whitespace.")
+        return value.strip() if value else value
+
+
+class UserProfileUpdateSerializer(serializers.ModelSerializer):
+    """
+    Serializer for updating user profile information.
+    """
+    first_name = serializers.CharField(
+        max_length=150,
+        allow_blank=True,
+        required=False,
+        help_text="User's first name"
+    )
+    last_name = serializers.CharField(
+        max_length=150,
+        allow_blank=True,
+        required=False,
+        help_text="User's last name"
+    )
+    phone_number = serializers.CharField(
+        max_length=20,
+        allow_blank=True,
+        required=False,
+        help_text="User's phone number"
+    )
+    
+    class Meta:
+        model = User
+        fields = ['first_name', 'last_name', 'phone_number']
+    
+    def validate_first_name(self, value):
+        """Validate first name"""
+        if value and value.isspace():
+            raise serializers.ValidationError("First name cannot be only whitespace.")
+        return value.strip() if value else value
+    
+    def validate_last_name(self, value):
+        """Validate last name"""
+        if value and value.isspace():
+            raise serializers.ValidationError("Last name cannot be only whitespace.")
+        return value.strip() if value else value
+    
+    def validate_phone_number(self, value):
+        """Validate phone number format"""
+        if value and not value.replace('+', '').replace('-', '').replace(' ', '').replace('(', '').replace(')', '').isdigit():
+            raise serializers.ValidationError("Phone number must contain only digits and allowed formatting characters (+, -, spaces, parentheses).")
+        return value.strip() if value else value
