@@ -1,4 +1,13 @@
 # messaging_app/urls.py
+from django.http import JsonResponse
+
+def root_view(request):
+    return JsonResponse({
+        "message": "Welcome to the Messaging API ",
+        "browse_api": "/api/",
+        "login": "/api-auth/login/",
+    })
+
 """
 URL configuration for messaging_app project.
 
@@ -21,6 +30,7 @@ from django.conf import settings
 from django.conf.urls.static import static
 
 urlpatterns = [
+    path('', root_view),
     path('admin/', admin.site.urls),
     path('api/', include('chats.urls')),  # Include chat app URLs under /api/
     
