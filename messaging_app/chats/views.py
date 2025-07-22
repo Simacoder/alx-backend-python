@@ -9,6 +9,15 @@ from django.db.models import Q, Count, Prefetch
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
+from rest_framework import generics
+from rest_framework.permissions import AllowAny
+from django.contrib.auth import authenticate
+from rest_framework_simplejwt.tokens import RefreshToken
+from .models import User
+from .serializers import UserSerializer
+from .permissions import IsAuthenticatedAndActive
+from .pagination import StandardResultsSetPagination
+from .filters import UserFilter
 
 from .models import Conversation, Message, MessageReadStatus
 from .serializers import (
@@ -149,6 +158,40 @@ class ConversationViewSet(viewsets.ModelViewSet):
         self.perform_update(serializer)
         
         return Response(serializer.data)
+    
+    @action(detail=True, methods=['post'])
+    def add_participant(self, request, pk=None):
+        """
+        Add a participant to the conversation
+        """
+        conversation = self.get_object()
+        
+        # Only allow adding participants to group conversations
+        if not conversation.is_group:
+            return Response(
+                {'error': 'Cannot add participants to direct conversations'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        serializer = ConversationParticipantSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        user_id = serializer.validated_data['user_id']
+        user = get_object_or_404(User, user_id=user_id)
+        
+        # Check if user is already a participant
+        if conversation.participants.filter(user_id=user_id).exists():
+            return Response(
+                {'error': 'User is already a participant in this conversation'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        conversation.participants.add(user)
+        return Response(
+            {'message': f'User {user.username} added to conversation'},
+            status=status.HTTP_200_OK
+        )
+
     
     @action(detail=True, methods=['post'])
     def remove_participant(self, request, pk=None):
@@ -466,3 +509,147 @@ def conversation_statistics(request):
             'unread': unread_messages
         }
     }, status=status.HTTP_200_OK)
+
+class UserViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    ViewSet for user operations.
+    Provides read-only access to user data for chat functionality.
+    """
+    serializer_class = UserSerializer
+    permission_classes = [IsAuthenticatedAndActive]
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = UserFilter
+    search_fields = ['username', 'first_name', 'last_name', 'email']
+    ordering_fields = ['username', 'first_name', 'last_name', 'date_joined']
+    ordering = ['username']
+    
+    def get_queryset(self):
+        """
+        Return active users excluding the current user
+        """
+        return User.objects.filter(
+            is_active=True
+        ).exclude(
+            user_id=self.request.user.user_id
+        )
+    
+    @action(detail=False, methods=['get'])
+    def search(self, request):
+        """
+        Search for users to add to conversations
+        """
+        query = request.GET.get('q', '')
+        if not query:
+            return Response(
+                {'error': 'Query parameter "q" is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Search users excluding the current user
+        users = User.objects.filter(
+            Q(username__icontains=query) |
+            Q(first_name__icontains=query) |
+            Q(last_name__icontains=query) |
+            Q(email__icontains=query)
+        ).exclude(
+            user_id=request.user.user_id
+        ).filter(
+            is_active=True
+        )[:10]  # Limit to 10 results
+        
+        serializer = UserSerializer(users, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    
+    @action(detail=False, methods=['get'])
+    def me(self, request):
+        """
+        Get current user's profile
+        """
+        serializer = UserSerializer(request.user)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    
+    @api_view(['GET'])
+    @permission_classes([IsAuthenticatedAndActive])
+    def conversation_stats(request):
+        """
+        Get conversation statistics for the current user (alternative name)
+        """
+        return conversation_statistics(request)
+
+
+    @api_view(['GET'])
+    @permission_classes([IsAuthenticatedAndActive])
+    def recent_conversations(request):
+        """
+        Get recent conversations for the current user
+        """
+        user = request.user
+        limit = int(request.GET.get('limit', 10))
+        
+        # Get user's recent conversations
+        conversations = Conversation.objects.filter(
+            participants=user
+        ).select_related(
+            'created_by'
+        ).prefetch_related(
+            'participants',
+            'messages'
+        ).annotate(
+            participant_count=Count('participants'),
+            unread_count=Count(
+                'messages',
+                filter=Q(
+                    messages__read_status__user=user,
+                    messages__read_status__is_read=False
+                ) | Q(
+                    messages__read_status__isnull=True,
+                    messages__sender__ne=user
+                )
+            )
+        ).order_by('-updated_at')[:limit]
+        
+        # Serialize the conversations
+        serializer = ConversationSerializer(conversations, many=True, context={'request': request})
+        
+        return Response({
+            'count': conversations.count(),
+            'results': serializer.data
+        }, status=status.HTTP_200_OK)
+
+
+
+class UserRegistrationView(generics.CreateAPIView):
+    """
+    User registration view
+    """
+    queryset = User.objects.all()
+    serializer_class = UserSerializer  # You'll need a UserRegistrationSerializer
+    permission_classes = [AllowAny]
+    
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+        
+        # Generate tokens for the new user
+        refresh = RefreshToken.for_user(user)
+        
+        return Response({
+            'user': UserSerializer(user).data,
+            'tokens': {
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+            }
+        }, status=status.HTTP_201_CREATED)
+
+
+class UserProfileView(generics.RetrieveUpdateAPIView):
+    """
+    User profile view for authenticated users
+    """
+    serializer_class = UserSerializer
+    permission_classes = [IsAuthenticatedAndActive]
+    
+    def get_object(self):
+        return self.request.user

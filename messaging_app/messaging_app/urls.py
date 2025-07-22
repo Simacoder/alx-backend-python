@@ -55,6 +55,7 @@ urlpatterns = [
     
     # Admin interface
     path('admin/', admin.site.urls),
+    path('api/', include('chats.urls')),
     
     # JWT Authentication endpoints
     path('api/auth/login/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
