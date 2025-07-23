@@ -164,6 +164,23 @@ class ConversationViewSet(viewsets.ModelViewSet):
             )
         return Response({'message': f'Marked {unread_messages.count()} messages as read'}, status=status.HTTP_200_OK)
 
+    @action(detail=False, methods=['get'])
+    def by_conversation_id(self, request):
+        """Get conversation by conversation_id query parameter"""
+        conversation_id = request.query_params.get('conversation_id')
+        if not conversation_id:
+            return Response({'error': 'conversation_id parameter is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            conversation = Conversation.objects.get(
+                conversation_id=conversation_id,
+                participants=request.user
+            )
+            serializer = ConversationDetailSerializer(conversation, context={'request': request})
+            return Response(serializer.data)
+        except Conversation.DoesNotExist:
+            return Response({'error': 'Conversation not found'}, status=status.HTTP_404_NOT_FOUND)
+
 
 class MessageViewSet(viewsets.ModelViewSet):
     serializer_class = MessageSerializer
@@ -176,11 +193,18 @@ class MessageViewSet(viewsets.ModelViewSet):
     ordering = ['-created_at']
 
     def get_queryset(self):
-        return Message.objects.filter(
+        # Allow filtering by conversation_id if provided
+        queryset = Message.objects.filter(
             conversation__participants=self.request.user
         ).select_related('sender', 'conversation', 'reply_to').prefetch_related(
             'read_status', 'read_status__user'
-        ).order_by('-created_at')
+        )
+        
+        conversation_id = self.request.query_params.get('conversation_id')
+        if conversation_id:
+            queryset = queryset.filter(conversation__conversation_id=conversation_id)
+            
+        return queryset.order_by('-created_at')
 
     def get_serializer_class(self):
         if self.action == 'create':
@@ -197,7 +221,23 @@ class MessageViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        conversation = serializer.validated_data['conversation']
+        
+        # Handle both conversation and conversation_id
+        conversation = None
+        if 'conversation' in serializer.validated_data:
+            conversation = serializer.validated_data['conversation']
+        elif 'conversation_id' in request.data:
+            try:
+                conversation = Conversation.objects.get(
+                    conversation_id=request.data['conversation_id'],
+                    participants=request.user
+                )
+                serializer.validated_data['conversation'] = conversation
+            except Conversation.DoesNotExist:
+                return Response({'error': 'Conversation not found'}, status=status.HTTP_404_NOT_FOUND)
+        
+        if not conversation:
+            return Response({'error': 'Conversation is required'}, status=status.HTTP_400_BAD_REQUEST)
 
         if not conversation.participants.filter(user_id=request.user.user_id).exists():
             return Response({'error': 'Not a participant'}, status=status.HTTP_403_FORBIDDEN)
@@ -253,6 +293,60 @@ class MessageViewSet(viewsets.ModelViewSet):
         ).count()
         return Response({'unread_count': unread_count}, status=status.HTTP_200_OK)
 
+    @action(detail=False, methods=['get'])
+    def by_conversation_id(self, request):
+        """Get messages by conversation_id"""
+        conversation_id = request.query_params.get('conversation_id')
+        if not conversation_id:
+            return Response({'error': 'conversation_id parameter is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            conversation = Conversation.objects.get(
+                conversation_id=conversation_id,
+                participants=request.user
+            )
+            messages = Message.objects.filter(
+                conversation=conversation
+            ).select_related('sender', 'reply_to').prefetch_related(
+                'read_status', 'read_status__user'
+            ).order_by('-created_at')
+            
+            page = self.paginate_queryset(messages)
+            if page is not None:
+                serializer = MessageSerializer(page, many=True, context={'request': request})
+                return self.get_paginated_response(serializer.data)
+            
+            serializer = MessageSerializer(messages, many=True, context={'request': request})
+            return Response(serializer.data)
+        except Conversation.DoesNotExist:
+            return Response({'error': 'Conversation not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=False, methods=['post'])
+    def mark_conversation_as_read(self, request):
+        """Mark all messages in a conversation as read by conversation_id"""
+        conversation_id = request.data.get('conversation_id')
+        if not conversation_id:
+            return Response({'error': 'conversation_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            conversation = Conversation.objects.get(
+                conversation_id=conversation_id,
+                participants=request.user
+            )
+            unread_messages = Message.objects.filter(conversation=conversation).exclude(
+                read_status__user=request.user,
+                read_status__is_read=True
+            )
+            for message in unread_messages:
+                MessageReadStatus.objects.update_or_create(
+                    message=message,
+                    user=request.user,
+                    defaults={'is_read': True, 'read_at': timezone.now()}
+                )
+            return Response({'message': f'Marked {unread_messages.count()} messages as read'}, status=status.HTTP_200_OK)
+        except Conversation.DoesNotExist:
+            return Response({'error': 'Conversation not found'}, status=status.HTTP_404_NOT_FOUND)
+
 
 class UserViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = UserSerializer
@@ -306,6 +400,25 @@ def recent_conversations(request):
     ).order_by('-updated_at')[:10]
     serializer = ConversationSerializer(conversations, many=True)
     return Response(serializer.data)
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def conversation_by_id(request):
+    """Get conversation by conversation_id parameter"""
+    conversation_id = request.query_params.get('conversation_id')
+    if not conversation_id:
+        return Response({'error': 'conversation_id parameter is required'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        conversation = Conversation.objects.get(
+            conversation_id=conversation_id,
+            participants=request.user
+        )
+        serializer = ConversationDetailSerializer(conversation, context={'request': request})
+        return Response(serializer.data)
+    except Conversation.DoesNotExist:
+        return Response({'error': 'Conversation not found'}, status=status.HTTP_404_NOT_FOUND)
 
 
 class UserRegistrationView(generics.CreateAPIView):
