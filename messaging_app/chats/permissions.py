@@ -1,14 +1,30 @@
-# customise permissions.py
 # chats/permissions.py
 from rest_framework import permissions
 
 
 class IsParticipantOfConversation(permissions.BasePermission):
     """
-    Custom permission to only allow participants of a conversation to access it.
+    Custom permission to only allow authenticated participants of a conversation to access it.
+    
+    This permission ensures that:
+    1. Only authenticated users can access the API
+    2. Only participants in a conversation can send, view, update and delete messages
     """
     
+    def has_permission(self, request, view):
+        """
+        Global permission check - user must be authenticated
+        """
+        return (
+            request.user and 
+            request.user.is_authenticated and 
+            request.user.is_active
+        )
+    
     def has_object_permission(self, request, view, obj):
+        """
+        Object-level permission check - user must be participant
+        """
         # For Conversation objects
         if hasattr(obj, 'participants'):
             return obj.participants.filter(user_id=request.user.user_id).exists()
@@ -24,6 +40,16 @@ class IsOwnerOrReadOnly(permissions.BasePermission):
     """
     Custom permission to only allow owners of an object to edit it.
     """
+    
+    def has_permission(self, request, view):
+        """
+        Global permission check - user must be authenticated
+        """
+        return (
+            request.user and 
+            request.user.is_authenticated and 
+            request.user.is_active
+        )
     
     def has_object_permission(self, request, view, obj):
         # Read permissions are allowed for any authenticated user
@@ -44,6 +70,16 @@ class IsMessageSender(permissions.BasePermission):
     Custom permission to only allow the sender of a message to modify it.
     """
     
+    def has_permission(self, request, view):
+        """
+        Global permission check - user must be authenticated
+        """
+        return (
+            request.user and 
+            request.user.is_authenticated and 
+            request.user.is_active
+        )
+    
     def has_object_permission(self, request, view, obj):
         # Only allow the sender to modify their message
         if hasattr(obj, 'sender'):
@@ -56,6 +92,16 @@ class IsConversationCreator(permissions.BasePermission):
     """
     Custom permission to only allow the creator of a conversation to perform certain actions.
     """
+    
+    def has_permission(self, request, view):
+        """
+        Global permission check - user must be authenticated
+        """
+        return (
+            request.user and 
+            request.user.is_authenticated and 
+            request.user.is_active
+        )
     
     def has_object_permission(self, request, view, obj):
         # Only allow the creator to perform certain actions
@@ -71,6 +117,16 @@ class CanModifyConversation(permissions.BasePermission):
     Participants can update title and add/remove participants (for group chats).
     Only creator can delete the conversation.
     """
+    
+    def has_permission(self, request, view):
+        """
+        Global permission check - user must be authenticated
+        """
+        return (
+            request.user and 
+            request.user.is_authenticated and 
+            request.user.is_active
+        )
     
     def has_object_permission(self, request, view, obj):
         # Check if user is a participant
@@ -91,6 +147,16 @@ class CanAccessMessage(permissions.BasePermission):
     Only participants of the conversation can access messages.
     Only sender can modify/delete their own messages.
     """
+    
+    def has_permission(self, request, view):
+        """
+        Global permission check - user must be authenticated
+        """
+        return (
+            request.user and 
+            request.user.is_authenticated and 
+            request.user.is_active
+        )
     
     def has_object_permission(self, request, view, obj):
         # Check if user is participant in the conversation
@@ -118,17 +184,26 @@ class IsAuthenticatedAndActive(permissions.BasePermission):
         )
 
 
-# Permission classes for different scenarios
+# Enhanced Permission classes for different scenarios
 class ConversationPermissions(permissions.BasePermission):
     """
-    Combined permissions for conversation operations
+    Combined permissions for conversation operations.
+    Enforces that only authenticated participants can access conversations,
+    and only participants can send, view, update messages.
     """
     
     def has_permission(self, request, view):
-        return request.user and request.user.is_authenticated
+        """
+        Global permission check - user must be authenticated and active
+        """
+        return (
+            request.user and 
+            request.user.is_authenticated and 
+            request.user.is_active
+        )
     
     def has_object_permission(self, request, view, obj):
-        # Must be a participant
+        # Must be a participant to access conversation
         if not obj.participants.filter(user_id=request.user.user_id).exists():
             return False
         
@@ -138,22 +213,35 @@ class ConversationPermissions(permissions.BasePermission):
             return obj.created_by == request.user
         elif view.action in ['add_participant', 'remove_participant']:
             # Only group conversations allow participant management
+            # And only participants can manage other participants
             return obj.is_group
+        elif view.action in ['update', 'partial_update', 'update_title']:
+            # Participants can update conversation details
+            return True
         
-        # Other actions allowed for participants
+        # Other actions (list, retrieve, create, mark_as_read) allowed for participants
         return True
 
 
 class MessagePermissions(permissions.BasePermission):
     """
-    Combined permissions for message operations
+    Combined permissions for message operations.
+    Enforces that only authenticated participants can access messages,
+    and only participants can send, view, update and delete messages.
     """
     
     def has_permission(self, request, view):
-        return request.user and request.user.is_authenticated
+        """
+        Global permission check - user must be authenticated and active
+        """
+        return (
+            request.user and 
+            request.user.is_authenticated and 
+            request.user.is_active
+        )
     
     def has_object_permission(self, request, view, obj):
-        # Must be participant in the conversation
+        # Must be participant in the conversation to access messages
         if not obj.conversation.participants.filter(user_id=request.user.user_id).exists():
             return False
         
@@ -161,5 +249,29 @@ class MessagePermissions(permissions.BasePermission):
         if view.action in ['update', 'partial_update', 'destroy']:
             return obj.sender == request.user
         
-        # Reading allowed for all participants
+        # Reading and marking as read allowed for all participants
+        return True
+
+
+class UserPermissions(permissions.BasePermission):
+    """
+    Permission class for user operations in chat context.
+    """
+    
+    def has_permission(self, request, view):
+        """
+        Global permission check - user must be authenticated and active
+        """
+        return (
+            request.user and 
+            request.user.is_authenticated and 
+            request.user.is_active
+        )
+    
+    def has_object_permission(self, request, view, obj):
+        # Users can only access their own profile for modifications
+        if view.action in ['update', 'partial_update', 'destroy']:
+            return obj == request.user
+        
+        # Reading other users' basic info is allowed for chat functionality
         return True

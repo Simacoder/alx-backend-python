@@ -24,7 +24,7 @@ def root_view(request):
             },
             "messaging": {
                 "conversations": "/api/conversations/",
-                "messages": "/api/messages/"
+                "messages": "/api/conversations/<id>/messages/"
             },
             "admin": "/admin/",
             "browsable_api": "/api-auth/login/"
@@ -32,40 +32,22 @@ def root_view(request):
         "documentation": "Include 'Authorization: Bearer <token>' header for authenticated requests"
     })
 
-"""
-URL configuration for messaging_app project.
-
-The `urlpatterns` list routes URLs to views. For more information please see:
-    https://docs.djangoproject.com/en/5.2/topics/http/urls/
-Examples:
-Function views
-    1. Add an import:  from my_app import views
-    2. Add a URL to urlpatterns:  path('', views.home, name='home')
-Class-based views
-    1. Add an import:  from other_app.views import Home
-    2. Add a URL to urlpatterns:  path('', Home.as_view(), name='home')
-Including another URLconf
-    1. Import the include() function: from django.urls import include, path
-    2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
-"""
-
 urlpatterns = [
-    # Root endpoint with API documentation
+    # Root welcome endpoint
     path('', root_view, name='root'),
-    
+
     # Admin interface
     path('admin/', admin.site.urls),
+
+    # App routes (chats, users, conversations, etc.)
     path('api/', include('chats.urls')),
-    
-    # JWT Authentication endpoints
+
+    # JWT authentication
     path('api/auth/login/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/auth/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('api/auth/verify/', TokenVerifyView.as_view(), name='token_verify'),
-    
-    # Main API endpoints (include your chats app URLs)
-    path('api/', include('chats.urls')),
-    
-    # DRF browsable API authentication (for development/testing)
+
+    # DRF browsable API auth
     path('api-auth/', include('rest_framework.urls')),
 ]
 

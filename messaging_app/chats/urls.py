@@ -14,15 +14,15 @@ conversations_router = NestedDefaultRouter(router, r'conversations', lookup='con
 conversations_router.register(r'messages', views.MessageViewSet, basename='conversation-messages')
 
 urlpatterns = [
-    # Authentication endpoints (class-based views)
+    # Authentication endpoints
     path('auth/register/', views.UserRegistrationView.as_view(), name='user-register'),
     path('auth/profile/', views.UserProfileView.as_view(), name='user-profile'),
-    
-    # ViewSet routes (RESTful endpoints)
+
+    # RESTful ViewSet routes
     path('', include(router.urls)),
     path('', include(conversations_router.urls)),
 
-    # Additional function-based view endpoints
-    path('stats/', views.conversation_stats, name='conversation-stats'),
+    # Function-based view endpoints
+    path('stats/', views.conversation_statistics, name='conversation-stats'),
     path('recent/', views.recent_conversations, name='recent-conversations'),
 ]
