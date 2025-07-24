@@ -175,3 +175,40 @@ class OffensiveLanguageMiddleware:
         else:
             ip = request.META.get('REMOTE_ADDR')
         return ip
+    
+
+class RolePermissionMiddleware:
+    """
+    Middleware to check user's role before allowing access to specific actions.
+    Only allows admin or moderator users to access certain endpoints.
+    """
+    
+    def __init__(self, get_response):
+        self.get_response = get_response
+    
+    def __call__(self, request):
+        # Define protected paths that require admin/moderator access
+        protected_paths = [
+            '/admin/',  # Django admin interface
+            '/moderate/',  # E moderator endpoint
+            '/api/chat/delete/',  #  protected API endpoint
+            # Add more protected paths as needed
+        ]
+        
+        # Check if the current path is protected
+        if any(request.path.startswith(path) for path in protected_paths):
+            # Check if user is authenticated and has the required role
+            if not (hasattr(request, 'user') and request.user.is_authenticated):
+                return HttpResponseForbidden("Authentication required")
+            
+            # Check user's role (assuming roles are stored in user.profile.role)
+            
+            user_role = getattr(request.user, 'role', None) or getattr(request.user.profile, 'role', None)
+            
+            if user_role not in ['admin', 'moderator']:
+                return HttpResponseForbidden(
+                    "You don't have permission to access this resource. "
+                    "Admin or moderator role required."
+                )
+        
+        return self.get_response(request)
