@@ -41,12 +41,18 @@ INSTALLED_APPS = [
     "chats",
 ]
 
+
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    
+    # Adding custom logging middleware 
+    # IMPORTANT:
+    "chats.middleware.RequestLoggingMiddleware",
+    
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -212,39 +218,30 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
-    'formatters': {
-        'verbose': {
-            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
-            'style': '{',
-        },
-        'simple': {
-            'format': '{levelname} {message}',
-            'style': '{',
-        },
-    },
     'handlers': {
-        'file': {
+        'request_file': {
             'level': 'INFO',
             'class': 'logging.FileHandler',
-            'filename': os.path.join(BASE_DIR, 'logs', 'django.log'),
-            'formatter': 'verbose',
+            'filename': 'requests.log',
+            'formatter': 'simple',
         },
         'console': {
-            'level': 'DEBUG' if DEBUG else 'INFO',
+            'level': 'INFO',
             'class': 'logging.StreamHandler',
             'formatter': 'simple',
         },
     },
-    'loggers': {
-        'django': {
-            'handlers': ['file', 'console'],
-            'level': 'INFO',
-            'propagate': True,
+    'formatters': {
+        'simple': {
+            'format': '{message}',
+            'style': '{',
         },
-        'chats': {
-            'handlers': ['file', 'console'],
-            'level': 'DEBUG' if DEBUG else 'INFO',
-            'propagate': True,
+    },
+    'loggers': {
+        'request_logger': {
+            'handlers': ['request_file'],
+            'level': 'INFO',
+            'propagate': False,
         },
     },
 }
