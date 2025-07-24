@@ -52,6 +52,7 @@ MIDDLEWARE = [
     # Adding custom logging middleware 
     # IMPORTANT:
     "chats.middleware.RequestLoggingMiddleware",
+    'chats.middleware.RestrictAccessByTimeMiddleware',
     
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
