@@ -222,12 +222,7 @@ LOGGING = {
         'request_file': {
             'level': 'INFO',
             'class': 'logging.FileHandler',
-            'filename': 'requests.log',
-            'formatter': 'simple',
-        },
-        'console': {
-            'level': 'INFO',
-            'class': 'logging.StreamHandler',
+            'filename': os.path.join(BASE_DIR, 'logs', 'requests.log'),
             'formatter': 'simple',
         },
     },
