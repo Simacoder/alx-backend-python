@@ -5,10 +5,12 @@ Logs each user's requests to a file with timestamp, user, and request path.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 from django.conf import settings
 from django.http import HttpResponseForbidden
+from collections import defaultdict
+
 
 
 class RequestLoggingMiddleware:
@@ -122,3 +124,54 @@ class RestrictAccessByTimeMiddleware:
         response = self.get_response(request)
         
         return response
+    
+
+class OffensiveLanguageMiddleware:
+    """
+    Middleware to limit the number of chat messages a user can send within a time window.
+    Implements a rate limit of 5 messages per minute per IP address.
+    """
+    
+    def __init__(self, get_response):
+        self.get_response = get_response
+        # Dictionary to store request counts and timestamps per IP
+        self.request_counts = defaultdict(list)
+        # Rate limit configuration
+        self.limit = 5  # 5 messages
+        self.window = timedelta(minutes=1)  # per minute
+    
+    def __call__(self, request):
+        # Only process POST requests (assuming chat messages are sent via POST)
+        if request.method == 'POST':
+            ip_address = self.get_client_ip(request)
+            current_time = datetime.now()
+            
+            # Remove timestamps older than our time window
+            self.request_counts[ip_address] = [
+                timestamp for timestamp in self.request_counts[ip_address]
+                if current_time - timestamp < self.window
+            ]
+            
+            # Check if the user has exceeded the limit
+            if len(self.request_counts[ip_address]) >= self.limit:
+                return HttpResponseForbidden(
+                    "You have exceeded the maximum allowed messages (5 per minute). "
+                    "Please wait before sending more messages."
+                )
+            
+            # Add the current request timestamp
+            self.request_counts[ip_address].append(current_time)
+        
+        return self.get_response(request)
+    
+    def get_client_ip(self, request):
+        """
+        Get the client's IP address from the request object.
+        Handles cases where the server is behind a proxy.
+        """
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(',')[0]
+        else:
+            ip = request.META.get('REMOTE_ADDR')
+        return ip
