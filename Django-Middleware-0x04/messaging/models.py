@@ -1,5 +1,5 @@
 from django.db import models
-from django.contrib.auth.models import User
+from django.conf import settings  
 from django.utils import timezone
 
 
@@ -8,14 +8,14 @@ class Message(models.Model):
     Model representing a message between users.
     """
     sender = models.ForeignKey(
-        User, 
-        on_delete=models.CASCADE, 
-        related_name='sent_messages',
-        help_text="User who sent the message"
-    )
+    settings.AUTH_USER_MODEL,
+    on_delete=models.CASCADE,
+    related_name='messaging_sent_messages',  
+    help_text="User who sent the message"
+  )
     receiver = models.ForeignKey(
-        User, 
-        on_delete=models.CASCADE, 
+        settings.AUTH_USER_MODEL,  
+        on_delete=models.CASCADE,
         related_name='received_messages',
         help_text="User who receives the message"
     )
@@ -59,22 +59,22 @@ class Notification(models.Model):
     ]
 
     user = models.ForeignKey(
-        User, 
-        on_delete=models.CASCADE, 
+        settings.AUTH_USER_MODEL,  
+        on_delete=models.CASCADE,
         related_name='notifications',
         help_text="User who receives the notification"
     )
     message = models.ForeignKey(
-        Message, 
-        on_delete=models.CASCADE, 
+        Message,
+        on_delete=models.CASCADE,
         related_name='notifications',
-        null=True, 
+        null=True,
         blank=True,
         help_text="Related message (if applicable)"
     )
     notification_type = models.CharField(
-        max_length=20, 
-        choices=NOTIFICATION_TYPES, 
+        max_length=20,
+        choices=NOTIFICATION_TYPES,
         default='message',
         help_text="Type of notification"
     )
@@ -114,10 +114,10 @@ class Notification(models.Model):
     def create_message_notification(cls, message):
         """
         Create a notification for a new message.
-        
+
         Args:
             message (Message): The message instance that triggered the notification
-            
+
         Returns:
             Notification: The created notification instance
         """

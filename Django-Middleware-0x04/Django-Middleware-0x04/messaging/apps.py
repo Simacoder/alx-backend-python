@@ -23,8 +23,3 @@ class MessagingConfig(AppConfig):
             print(f"Error importing messaging signals: {e}")
         except Exception as e:
             print(f"Unexpected error loading messaging signals: {e}")
-
-    @property
-    def verbose_name(self):
-        """Return a human-readable name for the app."""
-        return "Messaging System"
