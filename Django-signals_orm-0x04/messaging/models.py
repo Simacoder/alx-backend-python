@@ -1,4 +1,3 @@
-# Create your models here.
 # messaging/models.py
 from django.db import models
 from django.contrib.auth.models import AbstractUser
@@ -233,9 +232,21 @@ class Message(models.Model):
         help_text="Indicates if the message has been read"
     )
     
+    # UPDATED: Enhanced edit tracking with more details
     is_edited = models.BooleanField(
         default=False,
         help_text="Indicates if the message has been edited"
+    )
+    
+    edit_count = models.PositiveIntegerField(
+        default=0,
+        help_text="Number of times this message has been edited"
+    )
+    
+    last_edited_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Timestamp of the last edit"
     )
     
     #  Reply functionality
@@ -259,11 +270,14 @@ class Message(models.Model):
             models.Index(fields=['conversation', '-sent_at']),
             models.Index(fields=['sender', '-sent_at']),
             models.Index(fields=['is_read']),
+            models.Index(fields=['is_edited']),
+            models.Index(fields=['last_edited_at']),
         ]
 
     def __str__(self):
         content_preview = self.message_body[:50] + "..." if len(self.message_body) > 50 else self.message_body
-        return f"{self.sender.username}: {content_preview}"
+        edit_indicator = " (edited)" if self.is_edited else ""
+        return f"{self.sender.username}: {content_preview}{edit_indicator}"
 
     def mark_as_read(self):
         """Mark this message as read"""
@@ -272,15 +286,116 @@ class Message(models.Model):
             self.save(update_fields=['is_read'])
 
     def mark_as_edited(self):
-        """Mark this message as edited"""
-        if not self.is_edited:
-            self.is_edited = True
-            self.save(update_fields=['is_edited', 'updated_at'])
+        """Mark this message as edited and update edit tracking"""
+        from django.utils import timezone
+        
+        self.is_edited = True
+        self.edit_count += 1
+        self.last_edited_at = timezone.now()
+        self.save(update_fields=['is_edited', 'edit_count', 'last_edited_at', 'updated_at'])
 
     @property
     def is_reply(self):
         """Check if this message is a reply to another message"""
         return self.reply_to is not None
+
+    def get_edit_history(self):
+        """Get all edit history entries for this message"""
+        return self.edit_history.order_by('-edited_at')
+
+    def get_original_content(self):
+        """Get the original content of the message before any edits"""
+        first_history = self.edit_history.order_by('edited_at').first()
+        return first_history.old_content if first_history else self.message_body
+
+
+class MessageHistory(models.Model):
+    """
+    Model to track edit history of messages.
+    
+    This model stores the previous versions of a message every time it's edited,
+    allowing users to view the complete edit history.
+    """
+    history_id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+        help_text="Unique identifier for the history entry"
+    )
+    
+    # The message this history entry belongs to
+    message = models.ForeignKey(
+        Message,
+        on_delete=models.CASCADE,
+        related_name='edit_history',
+        help_text="Message this history entry belongs to"
+    )
+    
+    # The content before the edit
+    old_content = models.TextField(
+        help_text="Previous content of the message before edit"
+    )
+    
+    # The content after the edit (for reference)
+    new_content = models.TextField(
+        help_text="New content of the message after edit"
+    )
+    
+    # User who made the edit
+    edited_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='message_edits',
+        help_text="User who edited the message"
+    )
+    
+    # When the edit was made
+    edited_at = models.DateTimeField(
+        auto_now_add=True,
+        help_text="Timestamp when the edit was made"
+    )
+    
+    # Edit reason (optional)
+    edit_reason = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="Optional reason for the edit"
+    )
+    
+    # Version number
+    version = models.PositiveIntegerField(
+        help_text="Version number of this edit"
+    )
+
+    class Meta:
+        db_table = 'message_history'
+        verbose_name = 'Message History'
+        verbose_name_plural = 'Message Histories'
+        ordering = ['-edited_at']
+        
+        # Ensure proper ordering and uniqueness
+        indexes = [
+            models.Index(fields=['message', '-edited_at']),
+            models.Index(fields=['edited_by', '-edited_at']),
+            models.Index(fields=['message', 'version']),
+        ]
+        
+        # Ensure unique version numbers per message
+        unique_together = ['message', 'version']
+
+    def __str__(self):
+        return f"Edit v{self.version} of message {self.message.message_id} by {self.edited_by.username}"
+
+    @property
+    def content_changed(self):
+        """Check if the content actually changed"""
+        return self.old_content != self.new_content
+
+    @property
+    def content_diff_length(self):
+        """Get the difference in content length"""
+        return len(self.new_content) - len(self.old_content)
 
 
 class MessageReadStatus(models.Model):
@@ -329,6 +444,7 @@ class Notification(models.Model):
         ('mention', 'Mention'),
         ('group_add', 'Added to Group'),
         ('group_remove', 'Removed from Group'),
+        ('message_edit', 'Message Edited'),  # NEW: Added for message edits
     ]
     
     notification_id = models.UUIDField(
@@ -346,7 +462,7 @@ class Notification(models.Model):
         help_text="User who will receive this notification"
     )
     
-    # The user who triggered the notification (optional)
+    # The user who triggered the notification 
     sender = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -434,9 +550,11 @@ class Notification(models.Model):
 
     def mark_as_read(self):
         """Mark this notification as read"""
+        from django.utils import timezone
+        
         if not self.is_read:
             self.is_read = True
-            self.read_at = models.DateTimeField(auto_now=True)
+            self.read_at = timezone.now()
             self.save(update_fields=['is_read', 'read_at'])
 
     def mark_as_sent(self):
@@ -446,9 +564,11 @@ class Notification(models.Model):
             self.save(update_fields=['is_sent'])
 
 
-# Signal handlers to automatically update conversation timestamps
-from django.db.models.signals import post_save
+# SIGNAL HANDLERS
+from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
+from django.utils import timezone
+
 
 @receiver(post_save, sender=Message)
 def update_conversation_timestamp(sender, instance, created, **kwargs):
@@ -457,3 +577,141 @@ def update_conversation_timestamp(sender, instance, created, **kwargs):
     """
     if created:
         instance.conversation.save(update_fields=['updated_at'])
+
+
+@receiver(pre_save, sender=Message)
+def log_message_edit(sender, instance, **kwargs):
+    """
+    Log message edits by saving the old content to MessageHistory before updating.
+    
+    This signal fires before a message is saved. If the message already exists
+    (has a primary key) and the content has changed, it creates a history entry.
+    """
+    # Only process if this is an update (not a new message)
+    if instance.pk:
+        try:
+            # Get the current version from the database
+            old_message = Message.objects.get(pk=instance.pk)
+            
+            # Check if the message content has actually changed
+            if old_message.message_body != instance.message_body:
+                # Get the next version number
+                latest_history = MessageHistory.objects.filter(
+                    message=instance
+                ).order_by('-version').first()
+                
+                next_version = (latest_history.version + 1) if latest_history else 1
+                
+                # Create history entry with the old content
+                MessageHistory.objects.create(
+                    message=instance,
+                    old_content=old_message.message_body,
+                    new_content=instance.message_body,
+                    edited_by=instance.sender,  # Assuming sender is the editor
+                    version=next_version,
+                    
+                )
+                
+                # Mark the message as edited (this will be handled in mark_as_edited method)
+                # We don't call mark_as_edited here to avoid recursion
+                
+        except Message.DoesNotExist:
+            # This shouldn't happen, but handle gracefully
+            pass
+
+
+@receiver(post_save, sender=MessageHistory)
+def create_edit_notification(sender, instance, created, **kwargs):
+    """
+    Create a notification when a message is edited.
+    
+    This can notify other participants in the conversation about the edit.
+    """
+    if created and instance.version > 1:  # Don't notify for the first "edit" (original content)
+        # Get all participants in the conversation except the editor
+        conversation = instance.message.conversation
+        participants = conversation.participants.exclude(user_id=instance.edited_by.user_id)
+        
+        for participant in participants:
+            Notification.objects.create(
+                recipient=participant,
+                sender=instance.edited_by,
+                message=instance.message,
+                conversation=conversation,
+                notification_type='message_edit',
+                title=f'{instance.edited_by.get_full_name()} edited a message',
+                content=f'Message in "{conversation}" was edited'
+            )
+
+
+# UTILITY FUNCTIONS FOR MESSAGE EDITING
+
+def get_message_edit_history(message_id):
+    """
+    Utility function to get the complete edit history of a message.
+    
+    Args:
+        message_id: UUID of the message
+        
+    Returns:
+        QuerySet of MessageHistory objects ordered by version
+    """
+    try:
+        message = Message.objects.get(message_id=message_id)
+        return message.edit_history.order_by('version')
+    except Message.DoesNotExist:
+        return MessageHistory.objects.none()
+
+
+def get_message_with_history(message_id):
+    """
+    Utility function to get a message along with its edit history.
+    
+    Args:
+        message_id: UUID of the message
+        
+    Returns:
+        Dictionary containing message and its history
+    """
+    try:
+        message = Message.objects.get(message_id=message_id)
+        history = message.edit_history.order_by('version')
+        
+        return {
+            'message': message,
+            'history': list(history),
+            'edit_count': message.edit_count,
+            'is_edited': message.is_edited,
+            'last_edited_at': message.last_edited_at,
+            'original_content': message.get_original_content()
+        }
+    except Message.DoesNotExist:
+        return None
+
+
+def restore_message_version(message_id, version_number, user):
+    """
+    Utility function to restore a message to a previous version.
+    
+    Args:
+        message_id: UUID of the message
+        version_number: Version to restore to
+        user: User performing the restore operation
+        
+    Returns:
+        Boolean indicating success
+    """
+    try:
+        message = Message.objects.get(message_id=message_id)
+        history_entry = MessageHistory.objects.get(
+            message=message, 
+            version=version_number
+        )
+        
+        # Update message content to the old version
+        message.message_body = history_entry.old_content
+        message.save()  # This will trigger the pre_save signal to log the "restore" as an edit
+        
+        return True
+    except (Message.DoesNotExist, MessageHistory.DoesNotExist):
+        return False
