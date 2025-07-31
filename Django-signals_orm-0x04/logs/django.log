@@ -1,0 +1,49 @@
+INFO 2025-07-23 21:37:56,257 autoreload 9532 12772 Watching for file changes with StatReloader
+INFO 2025-07-23 21:38:02,223 basehttp 9532 5756 "GET / HTTP/1.1" 200 527
+WARNING 2025-07-23 21:38:02,712 log 9532 5756 Not Found: /favicon.ico
+WARNING 2025-07-23 21:38:02,727 basehttp 9532 5756 "GET /favicon.ico HTTP/1.1" 404 3555
+INFO 2025-07-23 22:10:24,172 autoreload 14088 2440 Watching for file changes with StatReloader
+INFO 2025-07-23 22:10:30,310 basehttp 14088 17308 "GET / HTTP/1.1" 200 527
+INFO 2025-07-23 22:10:39,897 basehttp 14088 19080 "GET / HTTP/1.1" 200 527
+WARNING 2025-07-23 22:15:45,713 log 14088 2020 Not Found: /favicon.ico
+WARNING 2025-07-23 22:15:45,720 basehttp 14088 2020 "GET /favicon.ico HTTP/1.1" 404 3555
+INFO 2025-07-23 22:16:09,951 basehttp 14088 19352 "GET / HTTP/1.1" 200 527
+INFO 2025-07-23 22:26:24,266 basehttp 14088 19648 "GET /admin/ HTTP/1.1" 200 8506
+INFO 2025-07-23 22:26:24,734 basehttp 14088 21052 "GET /static/admin/css/dark_mode.css HTTP/1.1" 200 2808
+INFO 2025-07-23 22:26:24,974 basehttp 14088 19648 "GET /static/admin/css/base.css HTTP/1.1" 200 22120
+INFO 2025-07-23 22:26:25,004 basehttp 14088 8968 "GET /static/admin/css/nav_sidebar.css HTTP/1.1" 200 2810
+INFO 2025-07-23 22:26:25,067 basehttp 14088 13760 "GET /static/admin/js/theme.js HTTP/1.1" 200 1653
+INFO 2025-07-23 22:26:25,098 basehttp 14088 21344 "GET /static/admin/css/dashboard.css HTTP/1.1" 200 441
+INFO 2025-07-23 22:26:25,162 basehttp 14088 13760 "GET /static/admin/js/nav_sidebar.js HTTP/1.1" 200 3063
+INFO 2025-07-23 22:26:25,197 basehttp 14088 788 "GET /static/admin/css/responsive.css HTTP/1.1" 200 16565
+INFO 2025-07-23 22:26:25,239 basehttp 14088 13760 "GET /static/admin/img/icon-changelink.svg HTTP/1.1" 200 380
+INFO 2025-07-23 22:26:25,240 basehttp 14088 788 "GET /static/admin/img/icon-addlink.svg HTTP/1.1" 200 331
+INFO 2025-07-23 22:26:29,067 basehttp 14088 4612 "GET /admin/chats/messagereadstatus/ HTTP/1.1" 200 11141
+INFO 2025-07-23 22:26:29,157 basehttp 14088 4612 "GET /static/admin/css/changelists.css HTTP/1.1" 200 6878
+INFO 2025-07-23 22:26:29,284 basehttp 14088 4612 "GET /static/admin/js/actions.js HTTP/1.1" 200 8076
+INFO 2025-07-23 22:26:29,309 basehttp 14088 12504 "GET /admin/jsi18n/ HTTP/1.1" 200 3342
+INFO 2025-07-23 22:26:29,312 basehttp 14088 12120 "GET /static/admin/js/jquery.init.js HTTP/1.1" 200 347
+INFO 2025-07-23 22:26:29,371 basehttp 14088 4612 "GET /static/admin/js/urlify.js HTTP/1.1" 200 7887
+INFO 2025-07-23 22:26:29,416 basehttp 14088 3976 "GET /static/admin/js/core.js HTTP/1.1" 200 6208
+INFO 2025-07-23 22:26:29,473 basehttp 14088 12504 "GET /static/admin/js/prepopulate.js HTTP/1.1" 200 1531
+INFO 2025-07-23 22:26:29,504 basehttp 14088 22292 "GET /static/admin/js/admin/RelatedObjectLookups.js HTTP/1.1" 200 9777
+INFO 2025-07-23 22:26:29,529 basehttp 14088 9392 "GET /static/admin/js/vendor/jquery/jquery.js HTTP/1.1" 200 285314
+INFO 2025-07-23 22:26:29,554 basehttp 14088 3976 "GET /static/admin/img/search.svg HTTP/1.1" 200 458
+INFO 2025-07-23 22:26:29,647 basehttp 14088 9392 "GET /static/admin/js/filters.js HTTP/1.1" 200 978
+INFO 2025-07-23 22:26:29,803 basehttp 14088 12120 "GET /static/admin/js/vendor/xregexp/xregexp.js HTTP/1.1" 200 325171
+INFO 2025-07-23 22:26:29,876 basehttp 14088 9392 "GET /static/admin/img/icon-viewlink.svg HTTP/1.1" 200 581
+INFO 2025-07-23 22:26:29,880 basehttp 14088 12120 "GET /static/admin/img/tooltag-add.svg HTTP/1.1" 200 331
+INFO 2025-07-23 22:26:33,321 basehttp 14088 6948 "GET /admin/chats/conversation/ HTTP/1.1" 200 11817
+INFO 2025-07-23 22:26:33,424 basehttp 14088 6948 "GET /admin/jsi18n/ HTTP/1.1" 200 3342
+INFO 2025-07-23 22:26:38,665 basehttp 14088 16016 "GET /admin/chats/user/add/ HTTP/1.1" 200 15767
+INFO 2025-07-23 22:26:38,743 basehttp 14088 3580 "GET /static/admin/css/unusable_password_field.css HTTP/1.1" 200 663
+INFO 2025-07-23 22:26:38,750 basehttp 14088 16016 "GET /static/admin/css/forms.css HTTP/1.1" 200 8525
+INFO 2025-07-23 22:26:38,822 basehttp 14088 6484 "GET /admin/jsi18n/ HTTP/1.1" 200 3342
+INFO 2025-07-23 22:26:38,831 basehttp 14088 8052 "GET /static/admin/js/prepopulate_init.js HTTP/1.1" 200 586
+INFO 2025-07-23 22:26:38,835 basehttp 14088 16016 "GET /static/admin/css/widgets.css HTTP/1.1" 200 11991
+INFO 2025-07-23 22:26:38,904 basehttp 14088 16016 "GET /static/admin/js/change_form.js HTTP/1.1" 200 606
+INFO 2025-07-23 22:26:38,918 basehttp 14088 8052 "GET /static/admin/js/unusable_password_field.js HTTP/1.1" 200 1480
+INFO 2025-07-23 22:26:49,231 basehttp 14088 20892 "GET /admin/auth/ HTTP/1.1" 200 5567
+INFO 2025-07-23 22:26:51,165 basehttp 14088 20892 "GET /admin/auth/ HTTP/1.1" 200 5567
+INFO 2025-07-23 22:26:53,898 basehttp 14088 8852 "GET /admin/ HTTP/1.1" 200 8506
+INFO 2025-07-23 22:34:30,877 basehttp 14088 15500 "GET / HTTP/1.1" 200 527
