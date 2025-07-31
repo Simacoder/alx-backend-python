@@ -1,5 +1,6 @@
 from rest_framework import viewsets, status, permissions, generics
 from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 from django.shortcuts import get_object_or_404
@@ -456,3 +457,46 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
 
     def get_object(self):
         return self.request.user
+    
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def delete_user(request):
+    """
+    Delete the authenticated user's account and all related data.
+    
+    This endpoint:
+    - Requires authentication
+    - Uses DELETE method
+    - Permanently deletes the user account
+    - Cleans up all related data through signals
+    - Returns appropriate HTTP status codes
+    
+    Example request:
+    DELETE /api/delete-account/
+    """
+    user = request.user
+    
+    try:
+        with transaction.atomic():
+            # Delete the user - this will trigger the post_delete signal
+            # which will handle all related data cleanup
+            user.delete()
+            
+            # Return success response
+            return Response(
+                {'detail': 'Account and all associated data deleted successfully.'},
+                status=status.HTTP_204_NO_CONTENT
+            )
+            
+    except Exception as e:
+        # Log the error for debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error deleting user {user.username}: {str(e)}")
+        
+        # Return error response
+        return Response(
+            {'detail': 'An error occurred while deleting your account.'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
