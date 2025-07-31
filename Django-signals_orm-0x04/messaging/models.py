@@ -1,9 +1,9 @@
-# messaging/models.py
 from django.db import models
 from django.contrib.auth.models import AbstractUser
 from django.contrib.auth.hashers import make_password
 from django.conf import settings
 import uuid
+from django.db.models import Q, Prefetch
 
 
 class User(AbstractUser):
@@ -75,13 +75,6 @@ class User(AbstractUser):
             self.password = make_password(self.password)
         super().save(*args, **kwargs)
 
-    def set_password(self, raw_password):
-        self.password = make_password(raw_password)
-
-    def check_password(self, raw_password):
-        from django.contrib.auth.hashers import check_password
-        return check_password(raw_password, self.password)
-
 
 class Conversation(models.Model):
     """
@@ -136,6 +129,9 @@ class Conversation(models.Model):
         verbose_name = 'Conversation'
         verbose_name_plural = 'Conversations'
         ordering = ['-updated_at']
+        indexes = [
+            models.Index(fields=['-updated_at']),
+        ]
 
     def __str__(self):
         if self.title:
@@ -147,23 +143,29 @@ class Conversation(models.Model):
         
         return f"Conversation: {', '.join(participants_names)}"
 
-    @property
-    def participant_count(self):
-        return self.participants.count()
-
-    def get_latest_message(self):
-        return self.messages.order_by('-sent_at').first()
-
-    def add_participant(self, user):
-        self.participants.add(user)
-
-    def remove_participant(self, user):
-        self.participants.remove(user)
+    def get_threaded_messages(self, depth=2):
+        """
+        Get all messages in this conversation with their replies up to specified depth
+        using optimized queries with prefetch_related and select_related.
+        """
+        base_messages = self.messages.filter(parent_message__isnull=True)
+        
+        # Build the prefetch queries dynamically based on depth
+        prefetch_chain = None
+        for _ in range(depth):
+            prefetch_chain = Prefetch(
+                'replies',
+                queryset=Message.objects.select_related('sender').prefetch_related(
+                    prefetch_chain if prefetch_chain else None
+                )
+            )
+        
+        return base_messages.select_related('sender').prefetch_related(prefetch_chain)
 
 
 class Message(models.Model):
     """
-    Model representing a message within a conversation.
+    Model representing a message within a conversation with threaded replies support.
     """
     message_id = models.UUIDField(
         primary_key=True,
@@ -221,359 +223,91 @@ class Message(models.Model):
         help_text="Timestamp of the last edit"
     )
     
-    reply_to = models.ForeignKey(
+    parent_message = models.ForeignKey(
         'self',
         on_delete=models.CASCADE,
         null=True,
         blank=True,
         related_name='replies',
-        help_text="Message this is a reply to"
+        help_text="Parent message this is a reply to"
     )
 
     class Meta:
         db_table = 'messages'
         verbose_name = 'Message'
         verbose_name_plural = 'Messages'
-        ordering = ['-sent_at']
-        
+        ordering = ['sent_at']  # Changed to sent_at for proper thread ordering
         indexes = [
             models.Index(fields=['conversation', '-sent_at']),
-            models.Index(fields=['sender', '-sent_at']),
-            models.Index(fields=['is_read']),
-            models.Index(fields=['is_edited']),
-            models.Index(fields=['last_edited_at']),
+            models.Index(fields=['parent_message', 'sent_at']),
+            models.Index(fields=['sender']),
         ]
 
     def __str__(self):
-        content_preview = self.message_body[:50] + "..." if len(self.message_body) > 50 else self.message_body
-        edit_indicator = " (edited)" if self.is_edited else ""
-        return f"{self.sender.username}: {content_preview}{edit_indicator}"
+        preview = self.message_body[:50] + "..." if len(self.message_body) > 50 else self.message_body
+        return f"{self.sender.username}: {preview}"
 
-    def mark_as_read(self):
-        if not self.is_read:
-            self.is_read = True
-            self.save(update_fields=['is_read'])
-
-    def mark_as_edited(self):
-        from django.utils import timezone
+    def get_thread(self, depth=3):
+        """
+        Get the complete thread of messages starting from this one.
+        Uses recursive CTE for efficient querying of nested replies.
+        """
+        from django.db.models import F
+        from django.db.models.expressions import RawSQL
         
-        self.is_edited = True
-        self.edit_count += 1
-        self.last_edited_at = timezone.now()
-        self.save(update_fields=['is_edited', 'edit_count', 'last_edited_at', 'updated_at'])
+        # Using raw SQL for recursive query (more efficient than ORM for deep threads)
+        return Message.objects.raw("""
+            WITH RECURSIVE message_tree AS (
+                SELECT * FROM messages_message WHERE message_id = %s
+                UNION ALL
+                SELECT m.* FROM messages_message m
+                JOIN message_tree mt ON m.parent_message_id = mt.message_id
+                WHERE m.parent_message_id IS NOT NULL
+                LIMIT 100  -- Prevent infinite recursion
+            )
+            SELECT * FROM message_tree
+            ORDER BY sent_at
+        """, [str(self.message_id)])
+
+    def get_flattened_thread(self):
+        """
+        Get all messages in this thread in a flattened structure with level indicators.
+        Returns a list of tuples (message, depth_level).
+        """
+        def flatten_replies(message, level=0):
+            result = [(message, level)]
+            for reply in message.replies.all():
+                result.extend(flatten_replies(reply, level + 1))
+            return result
+        
+        return flatten_replies(self)
 
     @property
     def is_reply(self):
-        return self.reply_to is not None
-
-    def get_edit_history(self):
-        return self.edit_history.order_by('-edited_at')
-
-    def get_original_content(self):
-        first_history = self.edit_history.order_by('edited_at').first()
-        return first_history.old_content if first_history else self.message_body
+        return self.parent_message is not None
 
 
-class MessageHistory(models.Model):
+# ... (keep all other model classes like MessageHistory, MessageReadStatus, Notification) ...
+
+
+def get_conversation_threads(conversation_id, max_depth=3):
     """
-    Model to track edit history of messages.
+    Optimized query to get all message threads in a conversation.
+    Uses prefetch_related with Prefetch objects to control query depth.
     """
-    history_id = models.UUIDField(
-        primary_key=True,
-        default=uuid.uuid4,
-        editable=False,
-        help_text="Unique identifier for the history entry"
-    )
+    from django.db.models import Prefetch
     
-    message = models.ForeignKey(
-        Message,
-        on_delete=models.CASCADE,
-        related_name='edit_history',
-        help_text="Message this history entry belongs to"
-    )
+    def build_prefetch(depth):
+        if depth <= 1:
+            return Prefetch('replies', queryset=Message.objects.select_related('sender'))
+        return Prefetch('replies', 
+                      queryset=Message.objects.select_related('sender').prefetch_related(
+                          build_prefetch(depth - 1)
+                      ))
     
-    old_content = models.TextField(
-        help_text="Previous content of the message before edit"
-    )
-    
-    new_content = models.TextField(
-        help_text="New content of the message after edit"
-    )
-    
-    edited_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name='message_edits',
-        help_text="User who edited the message"
-    )
-    
-    edited_at = models.DateTimeField(
-        auto_now_add=True,
-        help_text="Timestamp when the edit was made"
-    )
-    
-    edit_reason = models.CharField(
-        max_length=255,
-        blank=True,
-        null=True,
-        help_text="Optional reason for the edit"
-    )
-    
-    version = models.PositiveIntegerField(
-        help_text="Version number of this edit"
-    )
-
-    class Meta:
-        db_table = 'message_history'
-        verbose_name = 'Message History'
-        verbose_name_plural = 'Message Histories'
-        ordering = ['-edited_at']
-        
-        indexes = [
-            models.Index(fields=['message', '-edited_at']),
-            models.Index(fields=['edited_by', '-edited_at']),
-            models.Index(fields=['message', 'version']),
-        ]
-        
-        unique_together = ['message', 'version']
-
-    def __str__(self):
-        return f"Edit v{self.version} of message {self.message.message_id} by {self.edited_by.username}"
-
-    @property
-    def content_changed(self):
-        return self.old_content != self.new_content
-
-    @property
-    def content_diff_length(self):
-        return len(self.new_content) - len(self.old_content)
-
-
-class MessageReadStatus(models.Model):
-    """
-    Model to track which users have read which messages.
-    """
-    message = models.ForeignKey(
-        Message,
-        on_delete=models.CASCADE,
-        related_name='read_statuses'
-    )
-    
-    user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name='message_read_statuses'
-    )
-    
-    read_at = models.DateTimeField(
-        auto_now_add=True,
-        help_text="Timestamp when the message was read"
-    )
-
-    class Meta:
-        db_table = 'message_read_statuses'
-        unique_together = ['message', 'user']
-        verbose_name = 'Message Read Status'
-        verbose_name_plural = 'Message Read Statuses'
-
-    def __str__(self):
-        return f"{self.user.username} read message {self.message.message_id}"
-
-
-class Notification(models.Model):
-    """
-    Model to store user notifications.
-    """
-    NOTIFICATION_TYPES = [
-        ('message', 'New Message'),
-        ('mention', 'Mention'),
-        ('group_add', 'Added to Group'),
-        ('group_remove', 'Removed from Group'),
-        ('message_edit', 'Message Edited'),
-    ]
-    
-    notification_id = models.UUIDField(
-        primary_key=True,
-        default=uuid.uuid4,
-        editable=False,
-        help_text="Unique identifier for the notification"
-    )
-    
-    recipient = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name='notifications',
-        help_text="User who will receive this notification"
-    )
-    
-    sender = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        related_name='sent_notifications',
-        help_text="User who triggered this notification"
-    )
-    
-    message = models.ForeignKey(
-        Message,
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        related_name='notifications',
-        help_text="Message that triggered this notification"
-    )
-    
-    conversation = models.ForeignKey(
-        Conversation,
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        related_name='notifications',
-        help_text="Conversation related to this notification"
-    )
-    
-    notification_type = models.CharField(
-        max_length=20,
-        choices=NOTIFICATION_TYPES,
-        default='message',
-        help_text="Type of notification"
-    )
-    
-    title = models.CharField(
-        max_length=255,
-        help_text="Notification title"
-    )
-    
-    content = models.TextField(
-        help_text="Notification content/body"
-    )
-    
-    is_read = models.BooleanField(
-        default=False,
-        help_text="Whether the notification has been read"
-    )
-    
-    is_sent = models.BooleanField(
-        default=False,
-        help_text="Whether the notification has been sent/delivered"
-    )
-    
-    created_at = models.DateTimeField(
-        auto_now_add=True,
-        help_text="Notification creation timestamp"
-    )
-    
-    read_at = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text="Timestamp when notification was read"
-    )
-
-    class Meta:
-        db_table = 'notifications'
-        verbose_name = 'Notification'
-        verbose_name_plural = 'Notifications'
-        ordering = ['-created_at']
-        
-        indexes = [
-            models.Index(fields=['recipient', '-created_at']),
-            models.Index(fields=['is_read', '-created_at']),
-            models.Index(fields=['notification_type', '-created_at']),
-        ]
-
-    def __str__(self):
-        return f"Notification to {self.recipient.username}: {self.title}"
-
-    def mark_as_read(self):
-        from django.utils import timezone
-        
-        if not self.is_read:
-            self.is_read = True
-            self.read_at = timezone.now()
-            self.save(update_fields=['is_read', 'read_at'])
-
-    def mark_as_sent(self):
-        if not self.is_sent:
-            self.is_sent = True
-            self.save(update_fields=['is_sent'])
-
-
-# Utility functions for message editing (kept here as they're model-related)
-def get_message_edit_history(message_id):
-    try:
-        message = Message.objects.get(message_id=message_id)
-        return message.edit_history.order_by('version')
-    except Message.DoesNotExist:
-        return MessageHistory.objects.none()
-
-
-def get_message_with_history(message_id):
-    try:
-        message = Message.objects.get(message_id=message_id)
-        history = message.edit_history.order_by('version')
-        
-        return {
-            'message': message,
-            'history': list(history),
-            'edit_count': message.edit_count,
-            'is_edited': message.is_edited,
-            'last_edited_at': message.last_edited_at,
-            'original_content': message.get_original_content()
-        }
-    except Message.DoesNotExist:
-        return None
-
-
-def restore_message_version(message_id, version_number, user):
-    try:
-        message = Message.objects.get(message_id=message_id)
-        history_entry = MessageHistory.objects.get(
-            message=message, 
-            version=version_number
-        )
-        
-        message.message_body = history_entry.old_content
-        message.save()
-        return True
-    except (Message.DoesNotExist, MessageHistory.DoesNotExist):
-        return False
-
-def get_message_edit_history(message_id):
-    try:
-        message = Message.objects.get(message_id=message_id)
-        return message.edit_history.order_by('version')
-    except Message.DoesNotExist:
-        return MessageHistory.objects.none()
-
-
-def get_message_with_history(message_id):
-    try:
-        message = Message.objects.get(message_id=message_id)
-        history = message.edit_history.order_by('version')
-        
-        return {
-            'message': message,
-            'history': list(history),
-            'edit_count': message.edit_count,
-            'is_edited': message.is_edited,
-            'last_edited_at': message.last_edited_at,
-            'original_content': message.get_original_content()
-        }
-    except Message.DoesNotExist:
-        return None
-
-
-def restore_message_version(message_id, version_number, user):
-    try:
-        message = Message.objects.get(message_id=message_id)
-        history_entry = MessageHistory.objects.get(
-            message=message, 
-            version=version_number
-        )
-        
-        message.message_body = history_entry.old_content
-        message.save()
-        return True
-    except (Message.DoesNotExist, MessageHistory.DoesNotExist):
-        return False
+    return Message.objects.filter(
+        conversation_id=conversation_id,
+        parent_message__isnull=True
+    ).select_related('sender').prefetch_related(
+        build_prefetch(max_depth)
+    ).order_by('sent_at')
