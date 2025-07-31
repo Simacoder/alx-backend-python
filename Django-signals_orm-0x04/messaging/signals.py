@@ -1,209 +1,269 @@
-# messaging/signals.py
-from django.db.models.signals import post_save, m2m_changed, pre_save
+from django.db.models.signals import post_save, m2m_changed, pre_save, post_delete
 from django.dispatch import receiver
 from django.contrib.auth import get_user_model
 from django.utils import timezone
-from .models import Message, Notification, Conversation, MessageHistory
+from django.db import transaction
+from django.db.models import Q
+import logging
+from .models import Message, Notification, Conversation, MessageHistory, MessageReadStatus
 
+logger = logging.getLogger(__name__)
 User = get_user_model()
+
+
+class NotificationService:
+    """Helper class for notification-related operations"""
+    
+    @staticmethod
+    def create_message_notification(message, recipient, is_group):
+        """Create a notification for a new message"""
+        if is_group:
+            return Notification(
+                recipient=recipient,
+                sender=message.sender,
+                message=message,
+                conversation=message.conversation,
+                notification_type='message',
+                title=f"New message in {message.conversation.title or 'group chat'}",
+                content=f"{message.sender.get_full_name()} sent: {message.message_body[:100]}...",
+                is_sent=False
+            )
+        else:
+            return Notification(
+                recipient=recipient,
+                sender=message.sender,
+                message=message,
+                conversation=message.conversation,
+                notification_type='message',
+                title=f"New message from {message.sender.get_full_name()}",
+                content=message.message_body[:200] + ("..." if len(message.message_body) > 200 else ""),
+                is_sent=False
+            )
 
 
 # ====================== Message Signals ======================
 @receiver(post_save, sender=Message)
-def create_message_notification(sender, instance, created, **kwargs):
-    """
-    Create notifications when a new message is created.
-    Notifications are created for all conversation participants except the sender.
-    """
+def handle_new_message(sender, instance, created, **kwargs):
+    """Handle all post-save operations for Messages"""
     if created:
-        message = instance
-        conversation = message.conversation
-        sender_user = message.sender
-        
-        recipients = conversation.participants.exclude(user_id=sender_user.user_id)
-        notifications_to_create = []
-        
-        for recipient in recipients:
-            if conversation.is_group:
-                title = f"New message in {conversation.title or 'group chat'}"
-                content = f"{sender_user.get_full_name()} sent: {message.message_body[:100]}..."
-            else:
-                title = f"New message from {sender_user.get_full_name()}"
-                content = message.message_body[:200] + ("..." if len(message.message_body) > 200 else "")
-            
-            notifications_to_create.append(Notification(
-                recipient=recipient,
-                sender=sender_user,
-                message=message,
-                conversation=conversation,
-                notification_type='message',
-                title=title,
-                content=content,
-                is_sent=False,
-            ))
-        
-        if notifications_to_create:
-            Notification.objects.bulk_create(notifications_to_create)
-            print(f"Created {len(notifications_to_create)} notifications for message {message.message_id}")
+        try:
+            with transaction.atomic():
+                create_message_notification(instance)
+                update_conversation_timestamp(instance)
+        except Exception as e:
+            logger.error(f"Error handling new message: {str(e)}")
+
+
+def create_message_notification(message):
+    """Create notifications for a new message"""
+    conversation = message.conversation
+    recipients = conversation.participants.exclude(user_id=message.sender.user_id)
+    
+    notifications = [
+        NotificationService.create_message_notification(message, recipient, conversation.is_group)
+        for recipient in recipients
+    ]
+    
+    if notifications:
+        Notification.objects.bulk_create(notifications)
+        logger.debug(f"Created {len(notifications)} notifications for message {message.message_id}")
+
+
+def update_conversation_timestamp(message):
+    """Update conversation's last updated timestamp"""
+    message.conversation.save(update_fields=['updated_at'])
 
 
 @receiver(pre_save, sender=Message)
-def log_message_edit(sender, instance, **kwargs):
-    """
-    Track message edits by saving previous versions to MessageHistory.
-    Creates a new history entry if message content has changed.
-    """
-    if instance.pk:  # Only for existing messages
-        try:
-            old_message = Message.objects.get(pk=instance.pk)
-            if old_message.message_body != instance.message_body:
-                latest_history = MessageHistory.objects.filter(
-                    message=instance
-                ).order_by('-version').first()
-                
-                next_version = (latest_history.version + 1) if latest_history else 1
-                
-                MessageHistory.objects.create(
-                    message=instance,
-                    old_content=old_message.message_body,
-                    new_content=instance.message_body,
-                    edited_by=instance.sender,
-                    version=next_version,
-                )
-        except Message.DoesNotExist:
-            pass
+def handle_message_edit(sender, instance, **kwargs):
+    """Track message edits by saving previous versions"""
+    if not instance.pk:  # Skip new messages
+        return
+
+    try:
+        old_message = Message.objects.get(pk=instance.pk)
+        if old_message.message_body == instance.message_body:
+            return
+
+        latest_version = MessageHistory.objects.filter(
+            message=instance
+        ).order_by('-version').first()
+        
+        new_version = (latest_version.version + 1) if latest_version else 1
+        
+        MessageHistory.objects.create(
+            message=instance,
+            old_content=old_message.message_body,
+            new_content=instance.message_body,
+            edited_by=instance.sender,
+            version=new_version,
+        )
+        logger.debug(f"Created edit history v{new_version} for message {instance.message_id}")
+
+    except Exception as e:
+        logger.error(f"Error logging message edit: {str(e)}")
 
 
-@receiver(post_save, sender=Message)
-def update_conversation_timestamp(sender, instance, created, **kwargs):
+# ====================== User Deletion Signals ======================
+@receiver(post_delete, sender=User)
+def clean_up_user_data(sender, instance, **kwargs):
     """
-    Update conversation's updated_at when new messages are created.
+    Comprehensive cleanup of all user-related data.
+    Runs in atomic transaction to ensure data consistency.
     """
-    if created:
-        instance.conversation.save(update_fields=['updated_at'])
+    try:
+        with transaction.atomic():
+            # Delete all user-created content
+            Message.objects.filter(sender=instance).delete()
+            Notification.objects.filter(Q(recipient=instance) | Q(sender=instance)).delete()
+            MessageHistory.objects.filter(edited_by=instance).delete()
+            MessageReadStatus.objects.filter(user=instance).delete()
+            
+            # Remove user as conversation creator without deleting conversations
+            Conversation.objects.filter(created_by=instance).update(created_by=None)
+            
+            logger.info(f"Successfully cleaned up data for deleted user {instance.username}")
+
+    except Exception as e:
+        logger.error(f"Error cleaning up user {instance.username} data: {str(e)}")
+        # Continue despite errors since user is already deleted
 
 
 # ====================== Conversation Signals ======================
 @receiver(m2m_changed, sender=Conversation.participants.through)
-def create_group_notification(sender, instance, action, pk_set, **kwargs):
-    """
-    Handle notifications when users are added/removed from conversations.
-    Creates appropriate notifications for all affected users.
-    """
-    if action == "post_add" and pk_set:
-        conversation = instance
-        added_users = User.objects.filter(pk__in=pk_set)
-        
-        for added_user in added_users:
-            if conversation.is_group:
-                title = "Added to group chat"
-                content = f"You were added to '{conversation.title or 'a group chat'}'"
-                
-                Notification.objects.create(
-                    recipient=added_user,
-                    sender=conversation.created_by,
-                    conversation=conversation,
-                    notification_type='group_add',
-                    title=title,
-                    content=content,
-                )
-                
-                for participant in conversation.participants.exclude(pk=added_user.pk):
-                    Notification.objects.create(
-                        recipient=participant,
-                        sender=conversation.created_by,
-                        conversation=conversation,
-                        notification_type='group_add',
-                        title="New member added",
-                        content=f"{added_user.get_full_name()} was added to the group",
-                    )
-    
-    elif action == "post_remove" and pk_set:
-        conversation = instance
-        removed_users = User.objects.filter(pk__in=pk_set)
-        
-        for removed_user in removed_users:
-            if conversation.is_group:
-                Notification.objects.create(
-                    recipient=removed_user,
-                    sender=conversation.created_by,
-                    conversation=conversation,
-                    notification_type='group_remove',
-                    title="Removed from group chat",
-                    content=f"You were removed from '{conversation.title or 'a group chat'}'",
-                )
-                
-                for participant in conversation.participants.all():
-                    Notification.objects.create(
-                        recipient=participant,
-                        sender=conversation.created_by,
-                        conversation=conversation,
-                        notification_type='group_remove',
-                        title="Member removed",
-                        content=f"{removed_user.get_full_name()} was removed from the group",
-                    )
+def handle_participant_changes(sender, instance, action, pk_set, **kwargs):
+    """Manage notifications for group participant changes"""
+    if not instance.is_group or not pk_set:
+        return
+
+    try:
+        if action == "post_add":
+            notify_participants_added(instance, pk_set)
+        elif action == "post_remove":
+            notify_participants_removed(instance, pk_set)
+    except Exception as e:
+        logger.error(f"Error handling participant changes: {str(e)}")
+
+
+def notify_participants_added(conversation, user_ids):
+    """Notify about new group members"""
+    added_users = User.objects.filter(pk__in=user_ids)
+    creator = conversation.created_by
+
+    for user in added_users:
+        # Notify the new participant
+        Notification.objects.create(
+            recipient=user,
+            sender=creator,
+            conversation=conversation,
+            notification_type='group_add',
+            title="Added to group chat",
+            content=f"You were added to '{conversation.title or 'a group chat'}'",
+        )
+
+        # Notify existing participants
+        existing_participants = conversation.participants.exclude(pk__in=[user.pk, creator.pk])
+        for participant in existing_participants:
+            Notification.objects.create(
+                recipient=participant,
+                sender=creator,
+                conversation=conversation,
+                notification_type='group_add',
+                title="New member added",
+                content=f"{user.get_full_name()} was added to the group",
+            )
+
+
+def notify_participants_removed(conversation, user_ids):
+    """Notify about removed group members"""
+    removed_users = User.objects.filter(pk__in=user_ids)
+    creator = conversation.created_by
+
+    for user in removed_users:
+        # Notify the removed user
+        Notification.objects.create(
+            recipient=user,
+            sender=creator,
+            conversation=conversation,
+            notification_type='group_remove',
+            title="Removed from group chat",
+            content=f"You were removed from '{conversation.title or 'a group chat'}'",
+        )
+
+        # Notify remaining participants
+        remaining_participants = conversation.participants.exclude(pk=user.pk)
+        for participant in remaining_participants:
+            Notification.objects.create(
+                recipient=participant,
+                sender=creator,
+                conversation=conversation,
+                notification_type='group_remove',
+                title="Member removed",
+                content=f"{user.get_full_name()} was removed from the group",
+            )
 
 
 # ====================== MessageHistory Signals ======================
 @receiver(post_save, sender=MessageHistory)
-def create_edit_notification(sender, instance, created, **kwargs):
-    """
-    Create notifications when messages are edited.
-    Notifies all conversation participants except the editor.
-    """
-    if created and instance.version > 1:  # Skip notification for initial version
+def notify_about_edits(sender, instance, created, **kwargs):
+    """Notify participants about message edits"""
+    if not created or instance.version <= 1:
+        return
+
+    try:
         conversation = instance.message.conversation
-        participants = conversation.participants.exclude(user_id=instance.edited_by.user_id)
+        editor = instance.edited_by
         
-        for participant in participants:
+        recipients = conversation.participants.exclude(pk=editor.pk)
+        for recipient in recipients:
             Notification.objects.create(
-                recipient=participant,
-                sender=instance.edited_by,
+                recipient=recipient,
+                sender=editor,
                 message=instance.message,
                 conversation=conversation,
                 notification_type='message_edit',
-                title=f'{instance.edited_by.get_full_name()} edited a message',
+                title=f'{editor.get_full_name()} edited a message',
                 content=f'Message in "{conversation}" was edited'
             )
+    except Exception as e:
+        logger.error(f"Error creating edit notifications: {str(e)}")
 
 
-# ====================== Notification Signals ======================
-@receiver(post_save, sender=Notification)
-def log_notification_creation(sender, instance, created, **kwargs):
-    """
-    Log notification creation and potentially trigger delivery mechanisms.
-    """
-    if created:
-        print(f"New notification created: {instance.notification_type} for {instance.recipient.username}")
-
-
-# ====================== Helper Functions ======================
+# ====================== Notification Utilities ======================
 def mark_conversation_notifications_as_read(user, conversation):
-    """
-    Mark all notifications for a conversation as read for a user.
-    Returns count of marked notifications.
-    """
-    notifications = Notification.objects.filter(
-        recipient=user,
-        conversation=conversation,
-        is_read=False
-    )
-    count = notifications.update(is_read=True, read_at=timezone.now())
-    return count
+    """Mark all conversation notifications as read for a user"""
+    try:
+        updated = Notification.objects.filter(
+            recipient=user,
+            conversation=conversation,
+            is_read=False
+        ).update(is_read=True, read_at=timezone.now())
+        return updated
+    except Exception as e:
+        logger.error(f"Error marking notifications as read: {str(e)}")
+        return 0
 
 
 def get_unread_notification_count(user):
-    """Get count of unread notifications for a user."""
-    return Notification.objects.filter(recipient=user, is_read=False).count()
+    """Count unread notifications for a user"""
+    try:
+        return Notification.objects.filter(
+            recipient=user,
+            is_read=False
+        ).count()
+    except Exception as e:
+        logger.error(f"Error counting unread notifications: {str(e)}")
+        return 0
 
 
 def get_recent_notifications(user, limit=20):
-    """
-    Get recent notifications for a user with related objects prefetched.
-    Returns QuerySet of notifications ordered by most recent.
-    """
-    return Notification.objects.filter(
-        recipient=user
-    ).select_related(
-        'sender', 'message', 'conversation'
-    ).order_by('-created_at')[:limit]
+    """Get recent notifications with related objects"""
+    try:
+        return Notification.objects.filter(
+            recipient=user
+        ).select_related(
+            'sender', 'message', 'conversation'
+        ).order_by('-created_at')[:limit]
+    except Exception as e:
+        logger.error(f"Error fetching notifications: {str(e)}")
+        return Notification.objects.none()

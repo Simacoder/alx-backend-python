@@ -6,6 +6,7 @@ from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
 from django.db.models import Q, Count
 from django.utils import timezone
+from django.db import transaction
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.permissions import AllowAny
@@ -193,7 +194,6 @@ class MessageViewSet(viewsets.ModelViewSet):
     ordering = ['-created_at']
 
     def get_queryset(self):
-        # Allow filtering by conversation_id if provided
         queryset = Message.objects.filter(
             conversation__participants=self.request.user
         ).select_related('sender', 'conversation', 'reply_to').prefetch_related(
@@ -222,7 +222,6 @@ class MessageViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
-        # Handle both conversation and conversation_id
         conversation = None
         if 'conversation' in serializer.validated_data:
             conversation = serializer.validated_data['conversation']
@@ -364,6 +363,27 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
     def me(self, request):
         serializer = self.get_serializer(request.user)
         return Response(serializer.data)
+
+    @action(detail=False, methods=['delete'])
+    def delete_account(self, request):
+        """
+        Delete the user's account and all related data.
+        Requires authentication.
+        """
+        user = request.user
+        try:
+            with transaction.atomic():
+                # Delete the user (this will trigger the post_delete signal)
+                user.delete()
+                return Response(
+                    {'message': 'Account and all related data deleted successfully'},
+                    status=status.HTTP_204_NO_CONTENT
+                )
+        except Exception as e:
+            return Response(
+                {'error': f'Error deleting account: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 @api_view(['GET'])

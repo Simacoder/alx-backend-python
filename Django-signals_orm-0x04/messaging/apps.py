@@ -1,30 +1,71 @@
 # messaging/apps.py
 from django.apps import AppConfig
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class MessagingConfig(AppConfig):
     """
-    Django app configuration for the messaging application.
+    Django AppConfig for the messaging application.
     
-    This configuration class handles the initialization of the messaging app
-    and ensures that signal handlers are properly registered.
+    Handles app initialization and ensures proper registration of signal handlers.
+    Provides verbose name and default auto field configuration.
     """
+
     default_auto_field = "django.db.models.BigAutoField"
     name = "messaging"
     verbose_name = "Messaging System"
     
     def ready(self):
         """
-        This method is called when Django starts up.
+        Initialize the messaging application when Django starts.
         
-        It's the perfect place to import and register signal handlers
-        to ensure they are connected when the application starts.
+        Performs the following actions:
+        1. Imports and registers all signal handlers
+        2. Logs successful initialization or any errors
+        3. Ensures signals are only registered once
+        
+        This method is called exactly once during Django's startup process.
+        """
+        # Skip if we're running management commands that don't need signals
+        if self.is_management_command():
+            return
+            
+        self.register_signals()
+        
+    def register_signals(self):
+        """
+        Register all signal handlers for the messaging app.
+        
+        Uses proper error handling and logging to ensure any issues during
+        signal registration are properly reported.
         """
         try:
-            # Import signal handlers to register them
-            import messaging.signals
-            print("Messaging app signals registered successfully")
+            # Import signals module to register handlers
+            import messaging.signals  # noqa: F401
+            logger.info("Messaging app signals registered successfully")
         except ImportError as e:
-            print(f"Error importing messaging signals: {e}")
+            logger.error(f"Failed to import messaging signals: {str(e)}")
+        except Exception as e:
+            logger.error(f"Error registering messaging signals: {str(e)}")
+            
+    @staticmethod
+    def is_management_command():
+        """
+        Check if we're running a management command that doesn't need signals.
         
-        
+        Returns:
+            bool: True if we're running a management command that should skip
+                  signal registration, False otherwise.
+        """
+        import sys
+        if len(sys.argv) > 1 and sys.argv[1] in [
+            'makemigrations',
+            'migrate',
+            'collectstatic',
+            'flush',
+            'test'
+        ]:
+            return True
+        return False

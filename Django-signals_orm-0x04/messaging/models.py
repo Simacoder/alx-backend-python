@@ -538,3 +538,42 @@ def restore_message_version(message_id, version_number, user):
         return True
     except (Message.DoesNotExist, MessageHistory.DoesNotExist):
         return False
+
+def get_message_edit_history(message_id):
+    try:
+        message = Message.objects.get(message_id=message_id)
+        return message.edit_history.order_by('version')
+    except Message.DoesNotExist:
+        return MessageHistory.objects.none()
+
+
+def get_message_with_history(message_id):
+    try:
+        message = Message.objects.get(message_id=message_id)
+        history = message.edit_history.order_by('version')
+        
+        return {
+            'message': message,
+            'history': list(history),
+            'edit_count': message.edit_count,
+            'is_edited': message.is_edited,
+            'last_edited_at': message.last_edited_at,
+            'original_content': message.get_original_content()
+        }
+    except Message.DoesNotExist:
+        return None
+
+
+def restore_message_version(message_id, version_number, user):
+    try:
+        message = Message.objects.get(message_id=message_id)
+        history_entry = MessageHistory.objects.get(
+            message=message, 
+            version=version_number
+        )
+        
+        message.message_body = history_entry.old_content
+        message.save()
+        return True
+    except (Message.DoesNotExist, MessageHistory.DoesNotExist):
+        return False
