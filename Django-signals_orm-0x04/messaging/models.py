@@ -4,6 +4,7 @@ from django.contrib.auth.hashers import make_password
 from django.conf import settings
 import uuid
 from django.db.models import Q, Prefetch
+from django.utils import timezone
 
 
 class User(AbstractUser):
@@ -76,6 +77,21 @@ class User(AbstractUser):
         super().save(*args, **kwargs)
 
 
+class UnreadMessagesManager(models.Manager):
+    """
+    Custom manager for filtering unread messages.
+    """
+    def for_user(self, user):
+        return self.filter(
+            Q(receiver=user) & Q(is_read=False)
+        .select_related('sender', 'conversation')
+        .only(
+            'message_id', 'message_body', 'sent_at',
+            'sender__user_id', 'sender__username',
+            'conversation__conversation_id'
+        ))
+
+
 class Conversation(models.Model):
     """
     Model representing a conversation between users.
@@ -143,6 +159,13 @@ class Conversation(models.Model):
         
         return f"Conversation: {', '.join(participants_names)}"
 
+    def get_unread_count(self, user):
+        """
+        Get count of unread messages for a specific user in this conversation.
+        Uses the custom unread manager for optimized querying.
+        """
+        return self.messages.unread.for_user(user).count()
+
     def get_threaded_messages(self, depth=2):
         """
         Get all messages in this conversation with their replies up to specified depth
@@ -179,6 +202,13 @@ class Message(models.Model):
         on_delete=models.CASCADE,
         related_name='sent_messages',
         help_text="User who sent this message"
+    )
+    
+    receiver = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='received_messages',
+        help_text="User who should receive this message"
     )
     
     conversation = models.ForeignKey(
@@ -232,20 +262,39 @@ class Message(models.Model):
         help_text="Parent message this is a reply to"
     )
 
+    # Managers
+    objects = models.Manager()  # Default manager
+    unread = UnreadMessagesManager()  # Custom manager for unread messages
+
     class Meta:
         db_table = 'messages'
         verbose_name = 'Message'
         verbose_name_plural = 'Messages'
-        ordering = ['sent_at']  # Changed to sent_at for proper thread ordering
+        ordering = ['sent_at']
         indexes = [
             models.Index(fields=['conversation', '-sent_at']),
             models.Index(fields=['parent_message', 'sent_at']),
             models.Index(fields=['sender']),
+            models.Index(fields=['receiver', 'is_read']),  # Added for unread messages optimization
         ]
 
     def __str__(self):
         preview = self.message_body[:50] + "..." if len(self.message_body) > 50 else self.message_body
         return f"{self.sender.username}: {preview}"
+
+    def mark_as_read(self):
+        """
+        Mark the message as read and update the timestamp.
+        """
+        if not self.is_read:
+            self.is_read = True
+            self.save(update_fields=['is_read', 'updated_at'])
+            # Create or update read status
+            MessageReadStatus.objects.update_or_create(
+                message=self,
+                user=self.receiver,
+                defaults={'is_read': True, 'read_at': timezone.now()}
+            )
 
     def get_thread(self, depth=3):
         """
@@ -255,7 +304,6 @@ class Message(models.Model):
         from django.db.models import F
         from django.db.models.expressions import RawSQL
         
-        # Using raw SQL for recursive query (more efficient than ORM for deep threads)
         return Message.objects.raw("""
             WITH RECURSIVE message_tree AS (
                 SELECT * FROM messages_message WHERE message_id = %s
@@ -287,7 +335,45 @@ class Message(models.Model):
         return self.parent_message is not None
 
 
-# ... (keep all other model classes like MessageHistory, MessageReadStatus, Notification) ...
+class MessageReadStatus(models.Model):
+    """
+    Model for tracking message read status by users.
+    """
+    message = models.ForeignKey(
+        Message,
+        on_delete=models.CASCADE,
+        related_name='read_statuses',
+        help_text="The message being tracked"
+    )
+    
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        help_text="User who read/unread the message"
+    )
+    
+    is_read = models.BooleanField(
+        default=False,
+        help_text="Whether the message has been read"
+    )
+    
+    read_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the message was read"
+    )
+
+    class Meta:
+        db_table = 'message_read_status'
+        verbose_name = 'Message Read Status'
+        verbose_name_plural = 'Message Read Statuses'
+        unique_together = ('message', 'user')
+        indexes = [
+            models.Index(fields=['user', 'is_read']),
+        ]
+
+    def __str__(self):
+        return f"{self.user.username} - {'Read' if self.is_read else 'Unread'}"
 
 
 def get_conversation_threads(conversation_id, max_depth=3):
@@ -295,19 +381,18 @@ def get_conversation_threads(conversation_id, max_depth=3):
     Optimized query to get all message threads in a conversation.
     Uses prefetch_related with Prefetch objects to control query depth.
     """
-    from django.db.models import Prefetch
-    
     def build_prefetch(depth):
         if depth <= 1:
-            return Prefetch('replies', queryset=Message.objects.select_related('sender'))
+            return Prefetch('replies', 
+                          queryset=Message.objects.select_related('sender', 'receiver'))
         return Prefetch('replies', 
-                      queryset=Message.objects.select_related('sender').prefetch_related(
+                      queryset=Message.objects.select_related('sender', 'receiver').prefetch_related(
                           build_prefetch(depth - 1)
                       ))
     
     return Message.objects.filter(
         conversation_id=conversation_id,
         parent_message__isnull=True
-    ).select_related('sender').prefetch_related(
+    ).select_related('sender', 'receiver').prefetch_related(
         build_prefetch(max_depth)
     ).order_by('sent_at')
