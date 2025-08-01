@@ -23,15 +23,14 @@ class MessageViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """
-        Get unread messages using custom manager with optimized query.
+        Uses custom manager to get unread messages with optimized query
         """
         return Message.unread.unread_for_user(self.request.user)
 
     @action(detail=False, methods=['get'])
     def unread_inbox(self, request):
         """
-        Endpoint for user's unread inbox messages.
-        Uses custom manager and optimized query.
+        Endpoint for user's unread inbox messages
         """
         unread_messages = Message.unread.unread_for_user(request.user)
         page = self.paginate_queryset(unread_messages)
@@ -41,20 +40,25 @@ class MessageViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def mark_as_read(self, request, pk=None):
         """
-        Mark a specific message as read.
+        Mark a specific message as read
         """
-        message = get_object_or_404(Message, pk=pk, receiver=request.user)
+        message = get_object_or_404(
+            Message.unread.unread_for_user(request.user),
+            pk=pk
+        )
         message.is_read = True
         message.save(update_fields=['is_read'])
         return Response({'status': 'message marked as read'})
 
 class ConversationViewSet(viewsets.ModelViewSet):
-    queryset = Conversation.objects.all()
     serializer_class = ConversationSerializer
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = MessagePagination
 
     def get_queryset(self):
+        """
+        Optimized conversation query with prefetch of unread messages
+        """
         return Conversation.objects.filter(
             participants=self.request.user
         ).prefetch_related(
@@ -63,16 +67,17 @@ class ConversationViewSet(viewsets.ModelViewSet):
                 queryset=Message.unread.unread_for_user(self.request.user),
                 to_attr='unread_messages'
             )
+        ).only(
+            'id', 'title', 'updated_at'
         ).order_by('-updated_at')
 
     @action(detail=True, methods=['get'])
     def unread_messages(self, request, pk=None):
         """
-        Get unread messages in a specific conversation.
-        Uses custom manager and optimized query.
+        Get unread messages in a specific conversation
         """
         conversation = self.get_object()
-        unread_messages = conversation.messages.unread.unread_for_user(request.user)
+        unread_messages = conversation.get_unread_messages(request.user)
         page = self.paginate_queryset(unread_messages)
         serializer = MessageSerializer(page, many=True)
         return self.get_paginated_response(serializer.data)
@@ -80,11 +85,11 @@ class ConversationViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def unread_counts(self, request):
         """
-        Get counts of unread messages per conversation.
+        Get counts of unread messages per conversation
         """
         conversations = self.get_queryset()
         data = {
-            str(conv.id): conv.messages.unread.unread_for_user(request.user).count()
+            str(conv.id): len(conv.unread_messages)
             for conv in conversations
         }
         return Response(data)
