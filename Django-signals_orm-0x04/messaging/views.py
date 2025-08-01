@@ -4,8 +4,7 @@ from rest_framework.response import Response
 from rest_framework.decorators import action
 from django.shortcuts import get_object_or_404
 from rest_framework.pagination import PageNumberPagination
-from django.db.models import Prefetch
-from django.db.models import Q
+from django.db.models import Prefetch, Q, Count
 
 from .models import Conversation, Message
 from .serializers import MessageSerializer, ConversationSerializer
@@ -23,35 +22,27 @@ class MessageViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """
-        Optimized query using select_related and only()
+        Uses both direct optimized query AND custom manager for demonstration
         """
-        return Message.objects.filter(
-            receiver=self.request.user,
-            is_read=False
-        ).select_related(
-            'sender', 'conversation'
-        ).only(
-            'id', 'message_body', 'sent_at',
-            'sender__id', 'sender__username',
-            'conversation__id', 'conversation__title'
-        ).order_by('-sent_at')
+        # Using custom manager
+        return Message.unread.unread_for_user(self.request.user)
+        
+        # Alternative direct optimized query:
+        # return Message.objects.filter(
+        #     receiver=self.request.user,
+        #     is_read=False
+        # ).select_related('sender', 'conversation').only(
+        #     'id', 'message_body', 'sent_at',
+        #     'sender__id', 'sender__username',
+        #     'conversation__id', 'conversation__title'
+        # ).order_by('-sent_at')
 
     @action(detail=False, methods=['get'])
     def unread_inbox(self, request):
         """
-        Optimized unread inbox using select_related and only()
+        Uses custom manager for unread messages
         """
-        unread_messages = Message.objects.filter(
-            receiver=request.user,
-            is_read=False
-        ).select_related(
-            'sender', 'conversation'
-        ).only(
-            'id', 'message_body', 'sent_at',
-            'sender__id', 'sender__username',
-            'conversation__id', 'conversation__title'
-        )
-        
+        unread_messages = Message.unread.unread_for_user(request.user)
         page = self.paginate_queryset(unread_messages)
         serializer = self.get_serializer(page, many=True)
         return self.get_paginated_response(serializer.data)
@@ -59,10 +50,10 @@ class MessageViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def mark_as_read(self, request, pk=None):
         """
-        Mark message as read with optimized query
+        Uses custom manager to ensure we only mark unread messages
         """
         message = get_object_or_404(
-            Message.objects.filter(receiver=request.user),
+            Message.unread.unread_for_user(request.user),
             pk=pk
         )
         message.is_read = True
@@ -76,23 +67,15 @@ class ConversationViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """
-        Fully optimized conversation query with prefetch
+        Hybrid approach using both direct optimized queries and manager
         """
+        # Prefetch using custom manager
         return Conversation.objects.filter(
             participants=self.request.user
-        ).select_related(
-            'created_by'
-        ).prefetch_related(
+        ).select_related('created_by').prefetch_related(
             Prefetch(
                 'messages',
-                queryset=Message.objects.filter(
-                    receiver=self.request.user,
-                    is_read=False
-                ).select_related('sender')
-                .only(
-                    'id', 'message_body', 'sent_at',
-                    'sender__id', 'sender__username'
-                ),
+                queryset=Message.unread.unread_for_user(self.request.user),
                 to_attr='unread_messages'
             ),
             'participants'
@@ -103,18 +86,10 @@ class ConversationViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'])
     def unread_messages(self, request, pk=None):
         """
-        Optimized unread messages per conversation
+        Uses model method that internally uses custom manager
         """
         conversation = self.get_object()
-        unread_messages = Message.objects.filter(
-            conversation=conversation,
-            receiver=request.user,
-            is_read=False
-        ).select_related('sender').only(
-            'id', 'message_body', 'sent_at',
-            'sender__id', 'sender__username'
-        )
-        
+        unread_messages = conversation.get_unread_messages(request.user)
         page = self.paginate_queryset(unread_messages)
         serializer = MessageSerializer(page, many=True)
         return self.get_paginated_response(serializer.data)
@@ -122,9 +97,8 @@ class ConversationViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def unread_counts(self, request):
         """
-        Optimized unread counts using aggregation
+        Uses both direct optimized query and manager
         """
-        from django.db.models import Count
         conversations = Conversation.objects.filter(
             participants=request.user
         ).annotate(
@@ -134,6 +108,8 @@ class ConversationViewSet(viewsets.ModelViewSet):
                       Q(messages__is_read=False)
             )
         ).only('id', 'title')
+        
+         
         
         data = {
             str(conv.id): conv.unread_count
