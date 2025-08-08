@@ -78,7 +78,8 @@ DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": BASE_DIR / "db.sqlite3",
-        'default': env.db(),  # Parses DATABASE_URL if provided
+       # 'default': env.db(),  # Parses DATABASE_URL if provided
+        'default': env.db('DATABASE_URL', default='mysql://user:password@db:3306/dbname')
     }
 }
 
