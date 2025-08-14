@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: django-messaging-green
+  labels:
+    app: django-messaging
+    version: green
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: django-messaging
+      version: green
+  template:
+    metadata:
+      labels:
+        app: django-messaging
+        version: green
+    spec:
+      containers:
+        - name: django-messaging
+          image: simanga/django-messaging:green  # green/candidate image tag
+          ports:
+            - containerPort: 8000
+          env:
+            - name: DJANGO_SETTINGS_MODULE
+              value: messaging_app.settings
+            - name: PYTHONUNBUFFERED
+              value: "1"
