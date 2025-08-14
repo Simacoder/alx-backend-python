@@ -1,0 +1,75 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: django-messaging-blue-svc
+  labels:
+    app: django-messaging
+    version: blue
+spec:
+  selector:
+    app: django-messaging
+    version: blue
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: django-messaging-green-svc
+  labels:
+    app: django-messaging
+    version: green
+spec:
+  selector:
+    app: django-messaging
+    version: green
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP
+---
+# Stable route -> BLUE
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: django-messaging-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  rules:
+    - host: django.local
+      http:
+        paths:
+          - path: /api/
+            pathType: Prefix
+            backend:
+              service:
+                name: django-messaging-blue-svc
+                port:
+                  number: 8000
+---
+# Canary route -> GREEN, percentage controlled by weight
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: django-messaging-ingress-canary
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/canary: "true"
+    nginx.ingress.kubernetes.io/canary-weight: "20"   # start at 20% to green
+spec:
+  rules:
+    - host: django.local
+      http:
+        paths:
+          - path: /api/
+            pathType: Prefix
+            backend:
+              service:
+                name: django-messaging-green-svc
+                port:
+                  number: 8000
