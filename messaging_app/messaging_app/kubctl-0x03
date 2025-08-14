@@ -1,0 +1,53 @@
+#!/bin/bash
+# kubctl-0x03 - Rolling update script for Django app
+# Author: Simanga Mchunu
+
+set -euo pipefail
+
+DEPLOYMENT_FILE="blue_deployment.yaml"
+DEPLOYMENT_NAME="django-messaging-blue"
+NAMESPACE="default"
+APP_URL="http://django.local/api/"
+
+# -----------------------
+# Pre-flight checks
+# -----------------------
+if [[ ! -f "$DEPLOYMENT_FILE" ]]; then
+    echo "Error: $DEPLOYMENT_FILE does not exist."
+    exit 1
+fi
+
+if [[ ! -s "$DEPLOYMENT_FILE" ]]; then
+    echo "Error: $DEPLOYMENT_FILE is empty."
+    exit 1
+fi
+
+echo "Check passed: $DEPLOYMENT_FILE exists and is not empty."
+
+# -----------------------
+# Apply rolling update
+# -----------------------
+echo "=== Applying rolling update ==="
+kubectl apply -n "$NAMESPACE" -f "$DEPLOYMENT_FILE"
+
+echo "=== Monitoring rollout status ==="
+kubectl rollout status deployment/"$DEPLOYMENT_NAME" -n "$NAMESPACE"
+
+# -----------------------
+# Test app availability continuously
+# -----------------------
+echo "=== Testing app availability during rollout ==="
+for i in {1..20}; do
+    STATUS=$(curl -o /dev/null -s -w "%{http_code}\n" "$APP_URL" || echo "000")
+    TIMESTAMP=$(date +"%T")
+    echo "[$TIMESTAMP] Request $i returned status: $STATUS"
+    sleep 2
+done
+
+# -----------------------
+# Verify current pods
+# -----------------------
+echo "=== Current pods after rolling update ==="
+kubectl get pods -n "$NAMESPACE" -l app=django-messaging -o wide
+
+echo "=== Rolling update complete! ==="

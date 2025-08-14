@@ -19,7 +19,7 @@ spec:
     spec:
       containers:
         - name: django-messaging
-          image: simanga/django-messaging:blue  # blue/stable image tag
+          image: simanga/django-messaging:2.0   
           ports:
             - containerPort: 8000
           env:
