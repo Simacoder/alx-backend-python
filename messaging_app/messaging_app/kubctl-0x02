@@ -1,29 +1,68 @@
 #!/bin/bash
-# kubctl-0x02 - Blue/Green deploy & verify
+# kubctl-0x02 - Blue/Green deploy & verify with pre-flight checks
 # Author: Simanga Mchunu
 
 set -euo pipefail
 
+# -----------------------
+# Pre-flight checks
+# -----------------------
+FILES=(
+    "green_deployment.yaml"
+    "blue_deployment.yaml"
+    "kubeservice.yaml"
+    "kubctl-0x02"
+)
+
+for FILE in "${FILES[@]}"; do
+    if [[ ! -f "$FILE" ]]; then
+        echo "Error: $FILE does not exist."
+        exit 1
+    fi
+
+    if [[ ! -s "$FILE" ]]; then
+        echo "Error: $FILE is empty."
+        exit 1
+    fi
+
+    echo "Check passed: $FILE exists and is not empty."
+done
+
+# -----------------------
+# Deployment variables
+# -----------------------
 NAMESPACE="default"
 BLUE_DEPLOY="django-messaging-blue"
 GREEN_DEPLOY="django-messaging-green"
 CANARY_INGRESS="django-messaging-ingress-canary"
 HOSTNAME="django.local"
 
+# -----------------------
+# Apply deployments & services
+# -----------------------
 echo "=== Applying blue/green deployments and services ==="
 kubectl apply -n "$NAMESPACE" -f blue_deployment.yaml
 kubectl apply -n "$NAMESPACE" -f green_deployment.yaml
 kubectl apply -n "$NAMESPACE" -f kubeservice.yaml
 
+# -----------------------
+# Wait for deployments
+# -----------------------
 echo "=== Waiting for BLUE to be ready ==="
 kubectl rollout status deployment/"$BLUE_DEPLOY" -n "$NAMESPACE"
 
 echo "=== Waiting for GREEN to be ready ==="
 kubectl rollout status deployment/"$GREEN_DEPLOY" -n "$NAMESPACE"
 
+# -----------------------
+# List pods
+# -----------------------
 echo "=== Current pods ==="
 kubectl get pods -n "$NAMESPACE" -l app=django-messaging -o wide
 
+# -----------------------
+# Check GREEN pod logs
+# -----------------------
 echo "=== Checking GREEN pod logs for errors ==="
 GREEN_PODS=$(kubectl get pods -n "$NAMESPACE" -l app=django-messaging,version=green -o jsonpath='{.items[*].metadata.name}')
 if [[ -z "$GREEN_PODS" ]]; then
@@ -33,11 +72,12 @@ fi
 
 for p in $GREEN_PODS; do
   echo "--- Logs for $p ---"
-  # Print last 200 lines to quickly surface errors without flooding the terminal
   kubectl logs -n "$NAMESPACE" "$p" --tail=200 || true
 done
 
-# Optional progressive traffic shift: pass --promote to step canary weights 20% -> 50% -> 100%
+# -----------------------
+# Optional progressive traffic shift
+# -----------------------
 if [[ "${1:-}" == "--promote" ]]; then
   echo "=== Gradually shifting traffic to GREEN via canary weights ==="
   for W in 20 50 100; do
@@ -45,9 +85,7 @@ if [[ "${1:-}" == "--promote" ]]; then
     kubectl annotate ingress "$CANARY_INGRESS" -n "$NAMESPACE" \
       nginx.ingress.kubernetes.io/canary-weight="${W}" --overwrite
 
-    # Small wait to let routes update
     sleep 10
-
     echo "Ingresses:"
     kubectl get ingress -n "$NAMESPACE"
   done
