@@ -1,0 +1,30 @@
+#!/bin/bash
+# kubctl-0x01 - Scale Django Kubernetes app and test
+# Author: Simanga Mchunu
+
+set -e  # Exit immediately on error
+
+DEPLOYMENT_NAME="django-messaging-deployment"
+SERVICE_NAME="django-messaging-service"
+NAMESPACE="default"  # Change if using a custom namespace
+
+echo "=== Scaling deployment to 3 replicas ==="
+kubectl scale deployment "$DEPLOYMENT_NAME" --replicas=3 --namespace="$NAMESPACE"
+
+echo "=== Waiting for pods to be ready ==="
+kubectl rollout status deployment "$DEPLOYMENT_NAME" --namespace="$NAMESPACE"
+
+echo "=== Verifying running pods ==="
+kubectl get pods --namespace="$NAMESPACE"
+
+# Get ClusterIP and port for load testing
+SERVICE_IP=$(kubectl get svc "$SERVICE_NAME" --namespace="$NAMESPACE" -o jsonpath='{.spec.clusterIP}')
+SERVICE_PORT=$(kubectl get svc "$SERVICE_NAME" --namespace="$NAMESPACE" -o jsonpath='{.spec.ports[0].port}')
+
+echo "=== Performing load testing with wrk ==="
+echo "Note: The ClusterIP is internal; wrk must run inside the cluster or via port-forward."
+kubectl run wrk-tester --rm -i --tty --image=williamyeh/wrk --restart=Never -- \
+    wrk -t4 -c50 -d10s http://$SERVICE_IP:$SERVICE_PORT/
+
+echo "=== Monitoring resource usage ==="
+kubectl top pods --namespace="$NAMESPACE"
