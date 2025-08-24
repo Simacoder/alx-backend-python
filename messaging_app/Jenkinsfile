@@ -1,26 +1,42 @@
 pipeline {
+    // Use Python 3.10 Docker image as the agent
     agent {
-        docker { image 'python:3.10' } // Python environment
+        docker { 
+            image 'python:3.10'
+            args '-u root:root' // run as root to install dependencies if needed
+        }
+    }
+
+    environment {
+        VENV_DIR = "backend_env"
     }
 
     stages {
         stage('Checkout') {
             steps {
-                git credentialsId: 'github-credentials', url: 'https://github.com/Simacoder/alx-backend-python.git', branch: 'master'
+                git credentialsId: 'github-credentials', 
+                    url: 'https://github.com/Simacoder/alx-backend-python.git', 
+                    branch: 'master'
             }
         }
 
         stage('Install Dependencies') {
             steps {
-                sh 'python -m venv backend_env'
-                sh '. backend_env/bin/activate && pip install --upgrade pip'
-                sh '. backend_env/bin/activate && pip install -r messaging_app/requirements.txt'
+                sh """
+                    python -m venv $VENV_DIR
+                    . $VENV_DIR/bin/activate
+                    pip install --upgrade pip
+                    pip install -r messaging_app/requirements.txt
+                """
             }
         }
 
         stage('Run Tests') {
             steps {
-                sh '. backend_env/bin/activate && pytest messaging_app/tests --junitxml=report.xml'
+                sh """
+                    . $VENV_DIR/bin/activate
+                    pytest messaging_app/tests --junitxml=report.xml
+                """
             }
         }
 
