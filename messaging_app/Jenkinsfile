@@ -1,50 +1,45 @@
 pipeline {
     agent any
 
-    environment {
-        VENV = 'backend_env'
-        PYTHON_IMAGE = 'python:3.11-slim' // Docker image with Python
-    }
-
     stages {
         stage('Checkout') {
             steps {
-                echo 'Cloning repository...'
-                git credentialsId: 'github-credentials', url: 'https://github.com/Simacoder/alx-backend-python.git', branch: 'master'
+                git credentialsId: 'github-credentials', 
+                    url: 'https://github.com/Simacoder/alx-backend-python.git', 
+                    branch: 'master'
             }
         }
 
-        stage('Run Tests in Docker') {
+        stage('Install Dependencies') {
             steps {
-                echo 'Running tests inside Docker container...'
-                script {
-                    docker.image(PYTHON_IMAGE).inside('-v $WORKSPACE:/workspace') {
-                        sh '''
-                            cd /workspace/messaging_app
-                            python -m venv backend_env
-                            . backend_env/bin/activate
-                            pip install --upgrade pip
-                            pip install -r requirements.txt
-                            pip install pytest
-                            pytest tests --junitxml=report.xml
-                        '''
-                    }
-                }
+                sh '''
+                    python3 -m venv backend_env
+                    . backend_env/bin/activate
+                    pip install --upgrade pip
+                    pip install -r messaging_app/requirements.txt
+                '''
+            }
+        }
+
+        stage('Run Tests') {
+            steps {
+                sh '''
+                    . backend_env/bin/activate
+                    pytest messaging_app/tests --junitxml=report.xml
+                '''
             }
         }
 
         stage('Archive Report') {
             steps {
-                echo 'Archiving test report...'
-                junit 'messaging_app/report.xml'
+                junit 'report.xml'
             }
         }
     }
 
     post {
         always {
-            echo 'Archiving artifacts regardless of build result...'
-            archiveArtifacts artifacts: 'messaging_app/report.xml', allowEmptyArchive: true
+            archiveArtifacts artifacts: 'report.xml', allowEmptyArchive: true
         }
     }
 }
