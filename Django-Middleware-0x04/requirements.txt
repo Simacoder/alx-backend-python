@@ -1,5 +1,0 @@
-Django==3.2
-djangorestframework==3.12.4
-django-environ==0.10.0         # for .env-based config management
-django-cors-headers==3.10.0    # enable CORS if you’re using a frontend
-djangorestframework-simplejwt==5.3.0
