@@ -1,40 +1,26 @@
 pipeline {
-    agent any
-
-    environment {
-        VENV_DIR = 'backend_env'
+    agent {
+        docker { image 'python:3.10' } // Python environment
     }
 
     stages {
         stage('Checkout') {
             steps {
-                git credentialsId: 'github-credentials', 
-                    url: 'https://github.com/Simacoder/alx-backend-python.git', 
-                    branch: 'master'
+                git credentialsId: 'github-credentials', url: 'https://github.com/Simacoder/alx-backend-python.git', branch: 'master'
             }
         }
 
         stage('Install Dependencies') {
             steps {
-                // Create virtual environment
-                sh "python3 -m venv ${VENV_DIR}"
-
-                // Activate venv and install dependencies
-                sh """
-                    . ${VENV_DIR}/bin/activate
-                    pip install --upgrade pip
-                    pip install -r messaging_app/requirements.txt
-                """
+                sh 'python -m venv backend_env'
+                sh '. backend_env/bin/activate && pip install --upgrade pip'
+                sh '. backend_env/bin/activate && pip install -r messaging_app/requirements.txt'
             }
         }
 
         stage('Run Tests') {
             steps {
-                // Activate venv and run pytest
-                sh """
-                    . ${VENV_DIR}/bin/activate
-                    pytest messaging_app/tests --junitxml=report.xml
-                """
+                sh '. backend_env/bin/activate && pytest messaging_app/tests --junitxml=report.xml'
             }
         }
 
@@ -48,7 +34,6 @@ pipeline {
     post {
         always {
             archiveArtifacts artifacts: 'report.xml', allowEmptyArchive: true
-            cleanWs() // Clean workspace after build
         }
     }
 }
